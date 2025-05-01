@@ -1,0 +1,5 @@
+model_cache_dir: ./cache/models
+dataset_cache_dir : ./cache/datasets
+checkpoint_cache_dir: ./cache/checkpoints
+joblib_cache_dir: ./cache/joblibs
+task_cache_dir: ./cache/tasks

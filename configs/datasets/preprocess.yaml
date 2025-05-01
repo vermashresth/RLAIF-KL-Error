@@ -1,0 +1,141 @@
+PP10:
+  id: PKU-Alignment/PKU-SafeRLHF-10K
+  name: null
+  split:
+    - train
+  limit: 10000
+  ratio: 0.2
+
+PM10:
+  id: PKU-Alignment/PKU-SafeRLHF-10K
+  name: null
+  split:
+    - train
+  limit: 10000
+  ratio: 0.2
+
+PP30:
+  id: PKU-Alignment/PKU-SafeRLHF-30K
+  name: null
+  split:
+    - train
+    - test
+  limit: null
+  ratio: null
+
+PM30:
+  id: PKU-Alignment/PKU-SafeRLHF-30K
+  name: null
+  split:
+    - train
+    - test
+  limit: null
+  ratio: null
+
+PP0:
+  id: PKU-Alignment/PKU-SafeRLHF
+  name: null
+  split:
+    - train
+    - test
+  limit: null
+  ratio: null
+
+PM0:
+  id: PKU-Alignment/PKU-SafeRLHF
+  name: null
+  split:
+    - train
+    - test
+  limit: null
+  ratio: null
+
+U10:
+  id: openbmb/UltraFeedback
+  name: null
+  split:
+    - train
+  limit: 10000
+  ratio: 0.2
+
+U30:
+  id: openbmb/UltraFeedback
+  name: null
+  split:
+    - train
+  limit: 30000
+  ratio: 0.1
+
+U0:
+  id: openbmb/UltraFeedback
+  name: null
+  split:
+    - train
+  limit: null
+  ratio: 0.05
+
+AH10:
+  id: Anthropic/hh-rlhf
+  name: null
+  split:
+    - train
+  limit: 10000
+  ratio: 0.2
+
+AH30:
+  id: Anthropic/hh-rlhf
+  name: null
+  split:
+    - train
+  limit: 30000
+  ratio: 0.1
+
+AH0:
+  id: Anthropic/hh-rlhf
+  name: null
+  split:
+    - train
+    - test
+  limit: null
+  ratio: null
+
+OS10:
+  id: openai/summarize_from_feedback
+  name: comparisons
+  split:
+    - train
+  limit: 10000
+  ratio: 0.2
+
+OS30:
+  id: openai/summarize_from_feedback
+  name: comparisons
+  split:
+    - train
+  limit: 30000
+  ratio: 0.1
+
+OS0:
+  id: openai/summarize_from_feedback
+  name: comparisons
+  split:
+    - train
+    - validation
+  limit: null
+  ratio: null
+
+OW10:
+  id: openai/webgpt_comparisons
+  name: null
+  split:
+    - train
+  limit: 10000
+  ratio: 0.2
+
+OW0:
+  id: openai/webgpt_comparisons
+  name: null
+  split:
+    - train
+  limit: null
+  ratio: 0.1

@@ -1,0 +1,46 @@
+Q:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - up_proj
+  - gate_proj
+  - down_proj
+
+Py:
+  - query_key_value
+  - dense_h_to_4h
+  - dense_4h_to_h
+  - dense
+
+Ph:
+  - Wqkv
+  - out_proj
+  - fc1
+  - fc2
+
+Pm: all-linear
+
+G:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+
+M:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+  - lm_head
+
+L:
+  - k_proj
+  - q_proj
+  - v_proj
+  - up_proj
+  - down_proj
+  - gate_proj

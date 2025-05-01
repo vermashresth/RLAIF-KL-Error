@@ -1,0 +1,37 @@
+local: "rtxa6000:4"
+
+config_file:
+  SFT: ./configs/accelerate/sft/zero2.yaml
+  DPO: ./configs/accelerate/dpo/zero2.yaml
+  GEN: ./configs/accelerate/generate/ddp.yaml
+  EVALREWARD: ./configs/accelerate/evalreward/ddp.yaml
+
+pipelines:
+  SFT:
+    rtxa5000:
+      per_device_train_batch_size: 2
+      per_device_eval_batch_size: 2
+    rtxa6000:
+      per_device_train_batch_size: 10
+      per_device_eval_batch_size: 10
+  DPO:
+    rtxa5000:
+      per_device_train_batch_size: 2
+      per_device_eval_batch_size: 1
+      per_device_generation_batch_size: 8
+      per_device_evalreward_batch_size: 4
+    rtxa6000:
+      per_device_train_batch_size: 4
+      per_device_eval_batch_size: 2
+      per_device_generation_batch_size: 16
+      per_device_evalreward_batch_size: 8
+  GEN:
+    rtxa5000:
+      per_device_generation_batch_size: 4
+    rtxa6000:
+      per_device_generation_batch_size: 8
+  EVALREWARD:
+    rtxa5000:
+      per_device_evalreward_batch_size: 8
+    rtxa6000:
+      per_device_evalreward_batch_size: 16

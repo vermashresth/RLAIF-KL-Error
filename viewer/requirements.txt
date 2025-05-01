@@ -1,0 +1,9 @@
+numpy
+pandas
+requests
+python-dotenv
+huggingface_hub
+wandb
+datasets
+plotly
+joblib

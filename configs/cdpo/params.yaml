@@ -1,0 +1,22 @@
+DPO:
+  - beta
+DDP:
+  - beta
+  - r
+  - rho
+DPP:
+  - beta
+  - p
+  - pi
+DPR:
+  - beta
+  - g
+  - gamma
+MIX:
+  - beta
+  - r
+  - rho
+  - p
+  - pi
+  - g
+  - gamma

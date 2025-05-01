@@ -1,0 +1,12 @@
+organization:
+token:
+
+prefix:
+  datasets:
+  models:
+  evaluations:
+
+collections:
+  datasets:
+  models:
+  evaluations:

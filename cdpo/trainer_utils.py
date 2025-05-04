@@ -16,7 +16,12 @@ from transformers import (
 )
 
 
-from trl.import_utils import is_peft_available, is_unsloth_available, is_xpu_available
+from accelerate.utils import is_xpu_available
+from transformers.utils import is_peft_available
+from transformers.utils.import_utils import _is_package_available
+is_unsloth_available = lambda : _is_package_available("unsloth")
+
+
 from trl.trainer.model_config import ModelConfig
 
 

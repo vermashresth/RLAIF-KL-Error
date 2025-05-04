@@ -8,6 +8,13 @@
 2. We need OpenAI api to evaluate models. Please fill in `./configs/services/openai.yaml` with your account info.
 3. We use a HuggingFace Space App to retrieve and review results. Please fill in `./viewer/.env` with your account info.
 
+
+### Step 1.1
+Install safe-rlhf repo
+
+### Step 1.2
+Login into huuggingface - !huggingface-cli login
+
 ### Step 2: Installation
 1. With `python 3.10.*` and `CUDA 12.*` installed. You can run `python install -e .` to install this package called `cdpo`.
 
@@ -15,7 +22,8 @@
 1. Fill in or modify `./configs/tasks.yaml` for the set of experiments to run.
 
 ### Step 4: Run Experiments
-1. Run command `cdpo execute` to run all experiments specified.
+1. Run command !cdpo prep then 
+2. run `cdpo execute` to run all experiments specified.
 
 ### Step 5: View Results
 1. Inside `./viewer` folder, run `streamlit run app.py` to start the result viewer. Using the UI there to analysis the results.

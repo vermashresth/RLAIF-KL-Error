@@ -55,7 +55,7 @@ class ScriptArguments:
     lora_dropout: float = field(default=0.05, metadata={"help": "LoRA dropout"})
     lora_bias: str = field(default="none", metadata={"help": "LoRA bias"})
     use_q_lora: bool = field(default=False, metadata={"help": "used QLoRA"})
-    use_flash_attn: bool = field(default=True, metadata={"help": "use flash attention"})
+    use_flash_attn: bool = field(default=False, metadata={"help": "use flash attention"})
     model_cache_dir: str = field(
         default=CACHE_CONFIGS["model_cache_dir"],
         metadata={"help": "model cache directory"},
@@ -77,7 +77,7 @@ class TrainingArguments(transformers.TrainingArguments):
     )
     save_strategy: str = field(default="epoch", metadata={"help": "save strategy"})
     load_best_model_at_end: bool = field(
-        default=True, metadata={"help": "load best model at end"}
+        default=False, metadata={"help": "load best model at end"}
     )
     metric_for_best_model: str = field(
         default="loss", metadata={"help": "metric for best model"}

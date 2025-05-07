@@ -57,7 +57,7 @@ class ScriptArguments:
     use_lora: bool = field(
         default=True, metadata={"help": "use LoRA by default, do not change"}
     )
-    use_flash_attn: bool = field(default=True, metadata={"help": "use flash attention"})
+    use_flash_attn: bool = field(default=False, metadata={"help": "use flash attention"})
     num_beams: int = field(
         default=1,
         metadata={"help": "number of beams for beam search"},

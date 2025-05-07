@@ -31,3 +31,10 @@ Login into huuggingface - !huggingface-cli login
 
 ### Training time and memory requirements.
 The approximate training time and memory requirements of each SAIL training on three models are: Qwen1.5-0.5B: 1-4 hours with 4*A40 GPUs; Phi-3-3.8B: 2-8 hours with 4*RTX6000Ada GPUs; Llama-3-8B: 2-12 hours with 4*A100 GPUs.
+
+## Changes for debugigng training
+Running on T4 1 GPU (in devices.yaml)
+Batch size 1
+load best model is off
+Tasks.yaml has q0.5B model
+use flash attention is False in dpo.py, sft.py, generate.py (pipelines)

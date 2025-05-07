@@ -6,7 +6,7 @@ pipelines:
   - EVALREWARD
   - EVALGPT
 model:
-  - L8B
+  - Q0.5B
 dataset:
   - U0
 tasks:

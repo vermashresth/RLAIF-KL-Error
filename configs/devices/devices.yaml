@@ -29,21 +29,21 @@ pipelines:
       per_device_generation_batch_size: 16
       per_device_evalreward_batch_size: 8
     T4:
-      per_device_train_batch_size: 4
-      per_device_eval_batch_size: 2
-      per_device_generation_batch_size: 16
-      per_device_evalreward_batch_size: 8
+      per_device_train_batch_size: 1
+      per_device_eval_batch_size: 1
+      per_device_generation_batch_size: 1
+      per_device_evalreward_batch_size: 1
   GEN:
     rtxa5000:
       per_device_generation_batch_size: 4
     rtxa6000:
       per_device_generation_batch_size: 8
     T4:
-      per_device_generation_batch_size: 8
+      per_device_generation_batch_size: 1
   EVALREWARD:
     rtxa5000:
       per_device_evalreward_batch_size: 8
     rtxa6000:
       per_device_evalreward_batch_size: 16
     T4:
-      per_device_evalreward_batch_size: 16
+      per_device_evalreward_batch_size: 1

@@ -34,3 +34,10 @@ tasks:
       - 0.3
     gamma:
       - 0.3
+  - pipeline: DRO_DPR
+    beta:
+      - 0.1
+    dro:
+      - 0.3
+    omega:
+      - 0.3

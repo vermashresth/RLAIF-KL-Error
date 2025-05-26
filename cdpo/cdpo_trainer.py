@@ -133,6 +133,14 @@ class GeneralizedDPOTrainer(Trainer):
             If True, we ignore the _provided_ reference model and implicitly use a reference model that assigns equal probability to all responses.
         force_use_ref_model (`bool`, defaults to `False`):
             In case one passes a PEFT model for the active model and you want to use a different model for the ref_model, set this flag to `True`.
+        r: float = 0.0,
+        rho: float = 0.0,
+        p: float = 0.0,
+        pi: float = 0.0,
+        g: float = 0.0,
+        gamma: float = 0.0,
+        dro: float = 0.0,  # Add new parameter for DRO-DPR
+        omega: float = 0.0,  # Add new parameter for DRO-DPR gradient weight
     """
 
     _tag_names = ["trl", "dpo"]
@@ -201,6 +209,8 @@ class GeneralizedDPOTrainer(Trainer):
         pi: float = 0.0,
         g: float = 0.0,
         gamma: float = 0.0,
+        dro: float = 0.0,  # Add new parameter for DRO-DPR
+        omega: float = 0.0,  # Add new parameter for DRO-DPR gradient weight
         ##############################
     ):
         if model_init_kwargs is None:
@@ -424,6 +434,8 @@ class GeneralizedDPOTrainer(Trainer):
         self.pi = pi
         self.g = g
         self.gamma = gamma
+        self.dro = dro
+        self.omega = omega
         self._dpp_generation_inputs = []
         self._dpp_generation_outputs = []
         self._dpr_generation_inputs = []
@@ -431,6 +443,9 @@ class GeneralizedDPOTrainer(Trainer):
         self._ddp_sampling_mask = None
         self._dpp_sampling_mask = None
         self._dpr_sampling_mask = None
+        self._dro_dpr_sampling_mask = None
+        self._dro_dpr_generation_inputs = []
+        self._dro_dpr_generation_outputs = []
         ##############################
 
         self._stored_metrics = defaultdict(lambda: defaultdict(list))
@@ -1159,6 +1174,12 @@ class GeneralizedDPOTrainer(Trainer):
                     / detached_chosen_logps
                     * self._dpr_sampling_mask
                 )
+                - (
+                    self.omega  # New gradient weight parameter
+                    * detached_loss
+                    / detached_chosen_logps
+                    * self._dro_dpr_sampling_mask
+                )
             )
 
         def rejected_logps_grad_hook(grad):
@@ -1175,6 +1196,12 @@ class GeneralizedDPOTrainer(Trainer):
                     * detached_loss
                     / detached_rejected_logps
                     * self._dpr_sampling_mask
+                )
+                - (
+                    self.omega  # New gradient weight parameter
+                    * detached_loss
+                    / detached_rejected_logps
+                    * self._dro_dpr_sampling_mask
                 )
             )
 
@@ -1308,17 +1335,24 @@ class GeneralizedDPOTrainer(Trainer):
         if train_eval == "train":
 
             # Random state alreay synctronized and mask will be the same across all GPUs
-            # Sampling masks for DDP & DPP & DPR
-            probs = torch.tensor([self.r, self.p, self.g, 1 - self.r - self.p - self.g])
+            # Sampling masks for DDP & DPP & DPR & DRO-DPR
+            probs = torch.tensor([
+                self.r,  # DDP
+                self.p,  # DPP
+                self.g,  # DPR
+                self.dro,  # DRO-DPR
+                1 - self.r - self.p - self.g - self.dro  # Regular training
+            ])
             sampling_routes = torch.multinomial(
                 probs, len(batch["prompt"]), replacement=True
             )
             self._ddp_sampling_mask = (sampling_routes == 0).to(self.accelerator.device)
             self._dpp_sampling_mask = (sampling_routes == 1).to(self.accelerator.device)
             self._dpr_sampling_mask = (sampling_routes == 2).to(self.accelerator.device)
+            self._dro_dpr_sampling_mask = (sampling_routes == 3).to(self.accelerator.device)
 
             # DPP & DPR
-            if (self._dpp_sampling_mask | self._dpr_sampling_mask).sum() > 0:
+            if (self._dpp_sampling_mask | self._dpr_sampling_mask | self._dro_dpr_sampling_mask).sum() > 0:
                 batch = self.generate_samples(model, batch)
 
         ##############################
@@ -1478,15 +1512,16 @@ class GeneralizedDPOTrainer(Trainer):
         """Generate samples from the model for the given batch of prompts."""
 
         # Update the batch with the generated outputs
-        if (len(self._dpp_generation_outputs) + len(self._dpr_generation_outputs)) > 0:
+        if (len(self._dpp_generation_outputs) + len(self._dpr_generation_outputs) + len(self._dro_dpr_generation_outputs)) > 0:
             updated_features = []
-            for i, (prompt, chosen, rejected, dpp_m, dpr_m) in enumerate(
+            for i, (prompt, chosen, rejected, dpp_m, dpr_m, dro_dpr_m) in enumerate(
                 zip(
                     batch["prompt"],
                     batch["chosen"],
                     batch["rejected"],
                     self._dpp_sampling_mask,
                     self._dpr_sampling_mask,
+                    self._dro_dpr_sampling_mask,
                 )
             ):
                 if dpp_m:
@@ -1502,6 +1537,13 @@ class GeneralizedDPOTrainer(Trainer):
                         self._dpr_sampling_mask[i].fill_(False)
                     else:
                         updated_features.append(self._dpr_generation_outputs.pop())
+                        continue
+                elif dro_dpr_m:
+                    if len(self._dro_dpr_generation_outputs) == 0:
+                        warnings.warn("Insufficient generated responses for DRO-DPR")
+                        self._dro_dpr_sampling_mask[i].fill_(False)
+                    else:
+                        updated_features.append(self._dro_dpr_generation_outputs.pop())
                         continue
                 updated_features.append(
                     {
@@ -1528,29 +1570,19 @@ class GeneralizedDPOTrainer(Trainer):
         self._dpr_generation_inputs.extend(
             [p for p, dpr_m in zip(batch["prompt"], self._dpr_sampling_mask) if dpr_m]
         )
+        self._dro_dpr_generation_inputs.extend(
+            [p for p, dro_dpr_m in zip(batch["prompt"], self._dro_dpr_sampling_mask) if dro_dpr_m]
+        )
 
         # Conditions for generating a batch of samples
         if (
-            (
-                # If insufficient outputs for DPP
-                self.p > 0
-                and (
-                    len(self._dpp_generation_outputs)
-                    < self.args.per_device_train_batch_size
-                )
-            )
-            or (
-                # If insufficient outputs for DPR
-                self.g > 0
-                and (
-                    len(self._dpr_generation_outputs)
-                    < self.args.per_device_train_batch_size
-                )
-            )
+            (self.p > 0 and len(self._dpp_generation_outputs) < self.args.per_device_train_batch_size)
+            or (self.g > 0 and len(self._dpr_generation_outputs) < self.args.per_device_train_batch_size)
+            or (self.dro > 0 and len(self._dro_dpr_generation_outputs) < self.args.per_device_train_batch_size)
         ) and (
-            # If sufficient inputs collected
             len(self._dpp_generation_inputs)
             + len(self._dpr_generation_inputs)
+            + len(self._dro_dpr_generation_inputs)
             + self.args.per_device_train_batch_size
             > self.per_device_generation_batch_size * self.generation_num_batches
         ):
@@ -1570,11 +1602,12 @@ class GeneralizedDPOTrainer(Trainer):
 
         # Shuffle and truncate the collected prompts
         prompt_list = np.array(
-            self._dpp_generation_inputs + self._dpr_generation_inputs
+            self._dpp_generation_inputs + self._dpr_generation_inputs + self._dro_dpr_generation_inputs
         )
         prompt_origin_mask = np.array(
             [True] * len(self._dpp_generation_inputs)
             + [False] * len(self._dpr_generation_inputs)
+            + [False] * len(self._dro_dpr_generation_inputs)
         )
         prompt_shuffle_indices = np.random.permutation(len(prompt_list))
         prompt_list = prompt_list[prompt_shuffle_indices][
@@ -1664,7 +1697,7 @@ class GeneralizedDPOTrainer(Trainer):
                 "rejected": rejected[len(prompt) :],
             }
             for prompt, chosen, rejected in zip(
-                (self._dpp_generation_inputs + self._dpr_generation_inputs),
+                (self._dpp_generation_inputs + self._dpr_generation_inputs + self._dro_dpr_generation_inputs),
                 # Unroll the generated responses
                 generated_text[::2],
                 generated_text[1::2],
@@ -1698,6 +1731,7 @@ class GeneralizedDPOTrainer(Trainer):
         # Clear generation input buffers
         self._dpp_generation_inputs = []
         self._dpr_generation_inputs = []
+        self._dro_dpr_generation_inputs = []
 
         # Empty CUDA memory cache after generating samples
         torch.cuda.empty_cache()

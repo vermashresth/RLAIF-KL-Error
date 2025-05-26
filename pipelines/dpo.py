@@ -101,6 +101,10 @@ class ScriptArguments:
         default=CACHE_CONFIGS["dataset_cache_dir"],
         metadata={"help": "dataset cache directory"},
     )
+    dro: float = field(
+        default=0.0, metadata={"help": "sampling mixing probability for DRO-DPR"}
+    )
+    omega: float = field(default=0.0, metadata={"help": "gradient coefficient for DRO-DPR"})
 
 
 @dataclass
@@ -262,35 +266,39 @@ def load_and_config_model(script_args, training_args):
 def train(model, tokenizer, train_dataset, eval_dataset, script_args, training_args):
     # Parsing pipeline and setting
     if script_args.pipeline == "DPO":
-        print('Running DPO!!!')
         assert script_args.r == 0 and script_args.rho == 0
         assert script_args.p == 0 and script_args.pi == 0
         assert script_args.g == 0 and script_args.gamma == 0
+        assert script_args.dro == 0 and script_args.omega == 0
     elif script_args.pipeline == "DDP":
-        print('Running DDP!!!')
         assert script_args.p == 0 and script_args.pi == 0
         assert script_args.g == 0 and script_args.gamma == 0
+        assert script_args.dro == 0 and script_args.omega == 0
     elif script_args.pipeline == "DPP":
-        print('Running DPP!!!')
         assert script_args.r == 0 and script_args.rho == 0
         assert script_args.g == 0 and script_args.gamma == 0
+        assert script_args.dro == 0 and script_args.omega == 0
     elif script_args.pipeline == "DPR":
-        print('Running DPR!!!')
         assert script_args.r == 0 and script_args.rho == 0
         assert script_args.p == 0 and script_args.pi == 0
+        assert script_args.dro == 0 and script_args.omega == 0
+    elif script_args.pipeline == "DRO_DPR":
+        assert script_args.r == 0 and script_args.rho == 0
+        assert script_args.p == 0 and script_args.pi == 0
+        assert script_args.g == 0 and script_args.gamma == 0
     elif script_args.pipeline == "MIX":
         pass
     else:
         raise ValueError(f"Invalid pipeline name {script_args.pipeline}")
-    assert 0 <= (script_args.r + script_args.p + script_args.g) <= 1
-    training_args.num_train_epochs /= 1 - script_args.r - script_args.p - script_args.g
+    assert 0 <= (script_args.r + script_args.p + script_args.g + script_args.dro) <= 1
+    training_args.num_train_epochs /= 1 - script_args.r - script_args.p - script_args.g - script_args.dro
     reward_model, reward_tokenizer, reward_model_reverse = None, None, None
     for dataset_prefix in REWARD_CONFIGS.keys():
         if script_args.dataset.startswith(dataset_prefix):
             reward_model_id = REWARD_CONFIGS[dataset_prefix]["id"]
             reward_model_reverse = REWARD_CONFIGS[dataset_prefix]["reverse"]
             # Load reward model
-            if script_args.g > 0:
+            if script_args.g > 0 or script_args.dro > 0:
                 if reward_model_id.startswith("PKU-Alignment"):
                     reward_model = AutoModelForScore.from_pretrained(
                         reward_model_id,
@@ -361,6 +369,8 @@ def train(model, tokenizer, train_dataset, eval_dataset, script_args, training_a
         pi=script_args.pi,
         g=script_args.g,
         gamma=script_args.gamma,
+        dro=script_args.dro,
+        omega=script_args.omega,
     )
 
     train_dataset_size = len(trainer.train_dataset)
@@ -409,6 +419,8 @@ def main():
             "pi": script_args.pi,
             "g": script_args.g,
             "gamma": script_args.gamma,
+            "dro": script_args.dro,
+            "omega": script_args.omega,
         },
     )
     training_args.hub_model_id = HUGGINGFACE_CONFIGS["prefix"]["models"] + run

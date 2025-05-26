@@ -83,7 +83,13 @@ def load_generated_dataset(script_args):
         name=script_args.tag,
         cache_dir=script_args.dataset_cache_dir,
     )
-    return response_dataset["default"]
+
+    eval_dataset = response_dataset["default"]
+    print(f"Evaluation dataset size: {len(eval_dataset)}")
+    eval_sample_size = int(0.001 * len(eval_dataset))
+    eval_dataset = eval_dataset.select(range(eval_sample_size))
+    print(f"Evaluation dataset size (limited): {len(eval_dataset)}")
+    return eval_dataset
 
 
 # Load model and tokenizer for inference
@@ -194,6 +200,7 @@ def evaluate_reward(model, tokenizer, response_dataset, script_args):
 
 
 def main():
+    print('Start Evalreward.py!!')
     parser = HfArgumentParser(ScriptArguments)
     script_args = parser.parse_args_into_dataclasses()[0]
 
@@ -221,6 +228,7 @@ def main():
         HUGGINGFACE_CONFIGS["prefix"]["evaluations"] + script_args.run_name,
         script_args.tag,
     )
+    print('Finished Evalreward.py')
 
 
 if __name__ == "__main__":

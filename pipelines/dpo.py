@@ -156,7 +156,19 @@ def load_and_format_dataset(script_args):
         HUGGINGFACE_CONFIGS["prefix"]["datasets"] + script_args.dataset,
         cache_dir=script_args.dataset_cache_dir,
     )
-    return dataset["train"], dataset["eval"]
+    train_dataset = dataset["train"]
+    eval_dataset = dataset["eval"]
+
+    train_sample_size = int(0.001 * len(train_dataset))
+    train_dataset = train_dataset.select(range(train_sample_size))
+
+    eval_sample_size = int(0.001 * len(eval_dataset))
+    eval_dataset = eval_dataset.select(range(eval_sample_size))
+
+    print(f"Training dataset size (limited): {len(train_dataset)}")
+    print(f"Evaluation dataset size: {len(eval_dataset)}")
+
+    return train_dataset, eval_dataset
 
 
 # Load model and tokenizer and configure ZeRO, LoRA for training
@@ -250,16 +262,20 @@ def load_and_config_model(script_args, training_args):
 def train(model, tokenizer, train_dataset, eval_dataset, script_args, training_args):
     # Parsing pipeline and setting
     if script_args.pipeline == "DPO":
+        print('Running DPO!!!')
         assert script_args.r == 0 and script_args.rho == 0
         assert script_args.p == 0 and script_args.pi == 0
         assert script_args.g == 0 and script_args.gamma == 0
     elif script_args.pipeline == "DDP":
+        print('Running DDP!!!')
         assert script_args.p == 0 and script_args.pi == 0
         assert script_args.g == 0 and script_args.gamma == 0
     elif script_args.pipeline == "DPP":
+        print('Running DPP!!!')
         assert script_args.r == 0 and script_args.rho == 0
         assert script_args.g == 0 and script_args.gamma == 0
     elif script_args.pipeline == "DPR":
+        print('Running DPR!!!')
         assert script_args.r == 0 and script_args.rho == 0
         assert script_args.p == 0 and script_args.pi == 0
     elif script_args.pipeline == "MIX":
@@ -346,7 +362,24 @@ def train(model, tokenizer, train_dataset, eval_dataset, script_args, training_a
         g=script_args.g,
         gamma=script_args.gamma,
     )
+
+    train_dataset_size = len(trainer.train_dataset)
+    per_device_train_batch_size = training_args.per_device_train_batch_size
+    gradient_accumulation_steps = training_args.gradient_accumulation_steps
+    num_train_epochs = training_args.num_train_epochs
+
+    # Calculate the number of update steps per epoch
+    steps_per_epoch = (train_dataset_size + per_device_train_batch_size - 1) // per_device_train_batch_size
+    total_update_steps = steps_per_epoch // gradient_accumulation_steps * num_train_epochs
+
+    print(f"Estimated steps per epoch: {steps_per_epoch}")
+    print(f"Gradient accumulation steps: {gradient_accumulation_steps}")
+    print(f"Number of training epochs: {num_train_epochs}")
+    print(f"Estimated total update steps: {total_update_steps}")
+
+
     trainer.train()
+    print('Completed Training')
     return trainer
 
 
@@ -411,7 +444,7 @@ def main():
         shutil.rmtree(
             os.path.join(CACHE_CONFIGS["checkpoint_cache_dir"], run + "_" + HASHCODE)
         )
-
+    print('Completed main for dpo.py')
 
 if __name__ == "__main__":
     main()

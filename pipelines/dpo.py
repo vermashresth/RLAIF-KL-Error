@@ -163,7 +163,7 @@ def load_and_format_dataset(script_args):
     train_dataset = dataset["train"]
     eval_dataset = dataset["eval"]
 
-    train_sample_size = int(0.001 * len(train_dataset))
+    train_sample_size = int(0.0001 * len(train_dataset))
     train_dataset = train_dataset.select(range(train_sample_size))
 
     eval_sample_size = int(0.001 * len(eval_dataset))
@@ -266,23 +266,28 @@ def load_and_config_model(script_args, training_args):
 def train(model, tokenizer, train_dataset, eval_dataset, script_args, training_args):
     # Parsing pipeline and setting
     if script_args.pipeline == "DPO":
+        print('Running DPO!!!')
         assert script_args.r == 0 and script_args.rho == 0
         assert script_args.p == 0 and script_args.pi == 0
         assert script_args.g == 0 and script_args.gamma == 0
         assert script_args.dro == 0 and script_args.omega == 0
     elif script_args.pipeline == "DDP":
+        print('Running DDP!!!')
         assert script_args.p == 0 and script_args.pi == 0
         assert script_args.g == 0 and script_args.gamma == 0
         assert script_args.dro == 0 and script_args.omega == 0
     elif script_args.pipeline == "DPP":
+        print('Running DPP!!!')
         assert script_args.r == 0 and script_args.rho == 0
         assert script_args.g == 0 and script_args.gamma == 0
         assert script_args.dro == 0 and script_args.omega == 0
     elif script_args.pipeline == "DPR":
+        print('Running DPR!!!')
         assert script_args.r == 0 and script_args.rho == 0
         assert script_args.p == 0 and script_args.pi == 0
         assert script_args.dro == 0 and script_args.omega == 0
     elif script_args.pipeline == "DRO_DPR":
+        print('Running DRO-DPR!!!')
         assert script_args.r == 0 and script_args.rho == 0
         assert script_args.p == 0 and script_args.pi == 0
         assert script_args.g == 0 and script_args.gamma == 0

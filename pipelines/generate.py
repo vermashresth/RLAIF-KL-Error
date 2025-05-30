@@ -112,8 +112,11 @@ def load_and_format_dataset(script_args):
 
 # Load model and tokenizer for inference
 def load_and_config_model(script_args):
+    model_name = MODEL_CONFIGS[script_args.run.split("_")[1]]
+    print(f"Loading model: {model_name}")
+    
     config = AutoConfig.from_pretrained(
-        MODEL_CONFIGS[script_args.run.split("_")[1]],
+        model_name,
         cache_dir=script_args.model_cache_dir,
         trust_remote_code=True,
     )
@@ -124,7 +127,7 @@ def load_and_config_model(script_args):
         else (torch.bfloat16 if script_args.bf16 else torch.float32)
     )
     base_model = AutoModelForCausalLM.from_pretrained(
-        MODEL_CONFIGS[script_args.run.split("_")[1]],
+        model_name,
         torch_dtype=compute_dtype,
         device_map={"": accelerator.local_process_index},
         # Update transformers package to >=4.38.0 and no need to use trust_remote_code
@@ -135,7 +138,7 @@ def load_and_config_model(script_args):
         cache_dir=script_args.model_cache_dir,
     )
     tokenizer = AutoTokenizer.from_pretrained(
-        MODEL_CONFIGS[script_args.run.split("_")[1]],
+        model_name,
         model_max_length=script_args.model_max_length,
         padding_side="left",
         use_fast=True,
@@ -146,6 +149,7 @@ def load_and_config_model(script_args):
     # Assume PEFT is used for DPO training for now
     if script_args.use_lora:
         peft_model_id = HUGGINGFACE_CONFIGS["prefix"]["models"] + script_args.run
+        print('PEFT ID: ', peft_model_id)
         model = PeftModel.from_pretrained(
             base_model,
             peft_model_id,

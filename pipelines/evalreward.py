@@ -94,6 +94,7 @@ def load_generated_dataset(script_args):
 
 # Load model and tokenizer for inference
 def load_score_model(script_args):
+    print(f"Loading score model: {script_args.score_model_id}")
     if script_args.score_model_id.startswith("PKU-Alignment"):
         model = AutoModelForScore.from_pretrained(
             script_args.score_model_id,

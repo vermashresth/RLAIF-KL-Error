@@ -5,7 +5,9 @@ PP:
 PH:
   id: PKU-Alignment/beaver-7b-v1.0-cost
   reverse: true
-
+# U:
+#   id: openbmb/Eurus-RM-7b
+#   reverse: false
 U:
-  id: openbmb/Eurus-RM-7b
+  id: OpenAssistant/reward-model-deberta-v3-base
   reverse: false

@@ -12,6 +12,10 @@ DPR:
   - beta
   - g
   - gamma
+DRO_DPR:
+  - beta
+  - dro
+  - omega
 MIX:
   - beta
   - r

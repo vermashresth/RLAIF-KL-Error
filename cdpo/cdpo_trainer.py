@@ -1857,6 +1857,12 @@ class GeneralizedDPOTrainer(Trainer):
                         chosen_output.cpu().flatten(),
                         rejected_output.cpu().flatten(),
                     )
+                elif self.reward_model_id.startswith("OpenAssistant"):
+                    # For OpenAssistant, output is SequenceClassifierOutput, use logits
+                    chosen_output, rejected_output = (
+                        chosen_output.logits.cpu().flatten(),
+                        rejected_output.logits.cpu().flatten(),
+                    )
                 else:
                     raise RuntimeError("Unknown reward model")
                 chosen_scores.append(chosen_output)

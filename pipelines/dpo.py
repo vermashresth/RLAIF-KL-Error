@@ -22,6 +22,8 @@ from accelerate import Accelerator
 from transformers.integrations import deepspeed
 from peft import PeftModel
 from safe_rlhf.models import AutoModelForScore
+from transformers import AutoModelForSequenceClassification
+
 
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -309,6 +311,21 @@ def train(model, tokenizer, train_dataset, eval_dataset, script_args, training_a
                         reward_model_id,
                         torch_dtype=torch.bfloat16,
                         # Use auto device map since RMs are large
+                        device_map={"": accelerator.local_process_index},
+                        cache_dir=script_args.model_cache_dir,
+                    )
+                    reward_tokenizer = AutoTokenizer.from_pretrained(
+                        reward_model_id,
+                        model_max_length=training_args.model_max_length,
+                        padding_side="left",
+                        use_fast=True,
+                        cache_dir=script_args.model_cache_dir,
+                    )
+                elif reward_model_id.startswith("OpenAssistant"):
+                    print('Loading openassitanat RM')
+                    reward_model = AutoModelForSequenceClassification.from_pretrained(
+                        reward_model_id,
+                        torch_dtype=torch.bfloat16,
                         device_map={"": accelerator.local_process_index},
                         cache_dir=script_args.model_cache_dir,
                     )

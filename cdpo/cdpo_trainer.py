@@ -1054,21 +1054,21 @@ class GeneralizedDPOTrainer(Trainer):
         policy_rejected_logps: torch.FloatTensor,
         reference_chosen_logps: torch.FloatTensor,
         reference_rejected_logps: torch.FloatTensor,
+        chosen_rejected_probs: Optional[torch.FloatTensor] = None,  # Probability that chosen > rejected
         train_eval: Literal["train", "eval"] = "train",
     ) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
-        """Compute the DPO loss for a batch of policy and reference model log probabilities.
+        """
+        Compute the DPO loss for a batch of policy and reference model log probabilities.
 
         Args:
-            policy_chosen_logps: Log probabilities of the policy model for the chosen responses. Shape: (batch_size,)
-            policy_rejected_logps: Log probabilities of the policy model for the rejected responses. Shape: (batch_size,)
-            reference_chosen_logps: Log probabilities of the reference model for the chosen responses. Shape: (batch_size,)
-            reference_rejected_logps: Log probabilities of the reference model for the rejected responses. Shape: (batch_size,)
-
-        Returns:
-            A tuple of three tensors: (losses, chosen_rewards, rejected_rewards).
-            The losses tensor contains the DPO loss for each example in the batch.
-            The chosen_rewards and rejected_rewards tensors contain the rewards for the chosen and rejected responses, respectively.
+            policy_chosen_logps: Log probabilities of the policy model for the chosen responses
+            policy_rejected_logps: Log probabilities of the policy model for the rejected responses
+            reference_chosen_logps: Log probabilities of the reference model for the chosen responses
+            reference_rejected_logps: Log probabilities of the reference model for the rejected responses
+            chosen_rejected_probs: Optional probabilities that chosen is better than rejected from reward model
+            train_eval: Whether this is during training or evaluation
         """
+        # Original logratios (treating chosen as better)
         pi_logratios = policy_chosen_logps - policy_rejected_logps
         if self.reference_free:
             ref_logratios = torch.tensor(
@@ -1353,7 +1353,9 @@ class GeneralizedDPOTrainer(Trainer):
 
             # DPP & DPR
             if (self._dpp_sampling_mask | self._dpr_sampling_mask | self._dro_dpr_sampling_mask).sum() > 0:
-                batch = self.generate_samples(model, batch)
+                batch, chosen_rejected_probs = self.generate_samples(model, batch)
+        else:
+            chosen_rejected_probs = None
 
         ##############################
 
@@ -1391,6 +1393,7 @@ class GeneralizedDPOTrainer(Trainer):
             policy_rejected_logps,
             reference_chosen_logps,
             reference_rejected_logps,
+            chosen_rejected_probs,
             train_eval,
         )
         reward_accuracies = (chosen_rewards > rejected_rewards).float()
@@ -1811,11 +1814,14 @@ class GeneralizedDPOTrainer(Trainer):
     # DPR
     def _label_generated_by_reward(
         self, generated_features: List[Dict[str, str]]
-    ) -> List[Dict[str, str]]:
-
-        # If no samples are to be labeled, return the generated features as is
+    ) -> Tuple[List[Dict[str, str]], torch.Tensor]:
+        """
+        Returns:
+            Tuple of (labeled_features, probabilities) where probabilities represents
+            P(chosen > rejected) for each pair
+        """
         if not generated_features:
-            return generated_features
+            return generated_features, torch.tensor([])
 
         # Empty CUDA memory cache before labeling samples
         torch.cuda.empty_cache()
@@ -1865,6 +1871,19 @@ class GeneralizedDPOTrainer(Trainer):
                     )
                 else:
                     raise RuntimeError("Unknown reward model")
+
+                # Compute probability that chosen > rejected
+                if self.reward_model_id.startswith("OpenAssistant"):
+                    # For logits, use softmax to get probabilities
+                    probs = F.softmax(torch.stack([chosen_output, rejected_output], dim=-1), dim=-1)
+                    pair_probs = probs[:, 0] if not self.reward_model_reverse else probs[:, 1]
+                else:
+                    # For raw scores, use sigmoid of difference
+                    diff = chosen_output - rejected_output
+                    if self.reward_model_reverse:
+                        diff = -diff
+                    pair_probs = torch.sigmoid(diff)
+
                 chosen_scores.append(chosen_output)
                 rejected_scores.append(rejected_output)
             # Offload model from GPU
@@ -1872,15 +1891,16 @@ class GeneralizedDPOTrainer(Trainer):
 
         chosen_scores = torch.cat(chosen_scores, dim=0)
         rejected_scores = torch.cat(rejected_scores, dim=0)
+        probabilities = torch.cat(pair_probs, dim=0)
 
-        # Switch the chosen and rejected responses according to the switching mask
+        # Switch based on scores but store probabilities
         for f, cs, rs in zip(generated_features, chosen_scores, rejected_scores):
             if ((not self.reward_model_reverse) and (cs < rs)) or (
                 self.reward_model_reverse and (cs > rs)
             ):
                 f["chosen"], f["rejected"] = f["rejected"], f["chosen"]
 
-        return generated_features
+        return generated_features, probabilities
 
     ##############################
 

@@ -1354,6 +1354,56 @@ class GeneralizedDPOTrainer(Trainer):
             # DPP & DPR
             if (self._dpp_sampling_mask | self._dpr_sampling_mask | self._dro_dpr_sampling_mask).sum() > 0:
                 batch, chosen_rejected_probs = self.generate_samples(model, batch)
+            else:
+                # For regular training, compute probabilities using the reward model if available
+                if hasattr(self, 'reward_model') and self.reward_model is not None:
+                    with torch.no_grad():
+                        chosen_output = self.reward_model(
+                            **self.reward_tokenizer(
+                                [p + c for p, c in zip(batch["prompt"], batch["chosen"])],
+                                truncation=True,
+                                padding=True,
+                                return_tensors="pt",
+                            ).to(self.reward_model.device)
+                        )
+                        rejected_output = self.reward_model(
+                            **self.reward_tokenizer(
+                                [p + r for p, r in zip(batch["prompt"], batch["rejected"])],
+                                truncation=True,
+                                padding=True,
+                                return_tensors="pt",
+                            ).to(self.reward_model.device)
+                        )
+                        
+                        if self.reward_model_id.startswith("PKU-Alignment"):
+                            chosen_output, rejected_output = (
+                                chosen_output.end_scores.cpu().flatten(),
+                                rejected_output.end_scores.cpu().flatten(),
+                            )
+                        elif self.reward_model_id.startswith("openbmb"):
+                            chosen_output, rejected_output = (
+                                chosen_output.cpu().flatten(),
+                                rejected_output.cpu().flatten(),
+                            )
+                        elif self.reward_model_id.startswith("OpenAssistant"):
+                            chosen_output, rejected_output = (
+                                chosen_output.logits.cpu().flatten(),
+                                rejected_output.logits.cpu().flatten(),
+                            )
+                        else:
+                            raise RuntimeError("Unknown reward model")
+
+                        # Compute probability that chosen > rejected
+                        if self.reward_model_id.startswith("OpenAssistant"):
+                            probs = F.softmax(torch.stack([chosen_output, rejected_output], dim=-1), dim=-1)
+                            chosen_rejected_probs = probs[:, 0] if not self.reward_model_reverse else probs[:, 1]
+                        else:
+                            diff = chosen_output - rejected_output
+                            if self.reward_model_reverse:
+                                diff = -diff
+                            chosen_rejected_probs = torch.sigmoid(diff)
+                else:
+                    chosen_rejected_probs = None
         else:
             chosen_rejected_probs = None
 

@@ -86,9 +86,6 @@ def load_generated_dataset(script_args):
 
     eval_dataset = response_dataset["default"]
     print(f"Evaluation dataset size: {len(eval_dataset)}")
-    eval_sample_size = int(0.001 * len(eval_dataset))
-    eval_dataset = eval_dataset.select(range(eval_sample_size))
-    print(f"Evaluation dataset size (limited): {len(eval_dataset)}")
     return eval_dataset
 
 

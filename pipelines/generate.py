@@ -104,9 +104,6 @@ def load_and_format_dataset(script_args):
         num_proc=4,
     )
 
-    eval_sample_size = int(0.001 * len(eval_dataset))
-    eval_dataset = eval_dataset.select(range(eval_sample_size))
-
     return eval_dataset
 
 

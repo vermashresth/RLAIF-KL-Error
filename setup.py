@@ -7,7 +7,7 @@ from setuptools.command.develop import develop
 class PostDevelopCommand(develop):
     def run(self):
         develop.run(self)  # Call the standard install
-        self.install_flash_attn_packages()  # Install flash-attn after everything else
+        # self.install_flash_attn_packages()  # Install flash-attn after everything else
         self.create_directories()
 
     def install_flash_attn_packages(self):
@@ -40,7 +40,7 @@ setup(
     cmdclass={
         "develop": PostDevelopCommand,
     },
-    py_modules=["cli"],
+    py_modules=["cdpo_cli"],
     install_requires=requirements,
     entry_points={
         "console_scripts": ["cdpo=cdpo_cli:cli"]  # Pointing to the cli function in cli.py

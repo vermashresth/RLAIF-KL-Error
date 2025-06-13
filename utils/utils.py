@@ -103,6 +103,7 @@ def generate_sweep_tasks():
 # Initialize wandb
 def wandb_init(run_name, script_args, training_args):
     wandb.init(
+        mode="offline",
         project=WANDB_CONFIGS["project"],
         entity=WANDB_CONFIGS["team"],
         name=script_args.tag + "-" + run_name,

@@ -128,7 +128,7 @@ class TrainingArguments(transformers.TrainingArguments):
     optim: str = field(default="rmsprop", metadata={"help": "optimizer to use"})
     warmup_steps: int = field(default=150, metadata={"help": "number of warmup steps"})
     gradient_accumulation_steps: int = field(
-        default=2, metadata={"help": "gradient accumulation steps"}
+        default=1, metadata={"help": "gradient accumulation steps"}
     )
     gradient_checkpointing: bool = field(
         default=False, metadata={"help": "use gradient checkpointing"}
@@ -165,10 +165,10 @@ def load_and_format_dataset(script_args):
     train_dataset = dataset["train"]
     eval_dataset = dataset["eval"]
 
-    train_sample_size = int(0.0001 * len(train_dataset))
+    train_sample_size = int(len(train_dataset))
     train_dataset = train_dataset.select(range(train_sample_size))
 
-    eval_sample_size = int(0.001 * len(eval_dataset))
+    eval_sample_size = int(len(eval_dataset))
     eval_dataset = eval_dataset.select(range(eval_sample_size))
 
     print(f"Training dataset size (limited): {len(train_dataset)}")

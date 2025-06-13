@@ -166,3 +166,7 @@ wandb
 
 *.yaml
 configs/services/huggingface.yaml
+hostname.slurm
+gpu.slurm
+myerrors.err
+myoutput.out

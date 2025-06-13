@@ -1,21 +1,26 @@
 DPO:
   - beta
+  - loss_type
 DDP:
   - beta
   - r
   - rho
+  - loss_type
 DPP:
   - beta
   - p
   - pi
+  - loss_type
 DPR:
   - beta
   - g
   - gamma
+  - loss_type
 DRO_DPR:
   - beta
   - dro
   - omega
+  - loss_type
 MIX:
   - beta
   - r
@@ -24,3 +29,4 @@ MIX:
   - pi
   - g
   - gamma
+  - loss_type

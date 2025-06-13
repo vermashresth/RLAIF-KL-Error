@@ -34,7 +34,7 @@ def format_run_name(pipeline, model, dataset, extra_params):
         required_params = PARAMS_CONFIGS[pipeline]
         configs = "".join(
             [
-                param_name + f"{extra_params[param_name]:.2f}"
+                param_name + str(extra_params[param_name])
                 for param_name in required_params
             ]
         )

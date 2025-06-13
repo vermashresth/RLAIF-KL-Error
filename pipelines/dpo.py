@@ -107,6 +107,10 @@ class ScriptArguments:
         default=0.0, metadata={"help": "sampling mixing probability for DRO-DPR"}
     )
     omega: float = field(default=0.0, metadata={"help": "gradient coefficient for DRO-DPR"})
+    loss_type: str = field(
+        default="generalized_sigmoid_smooth_label",
+        metadata={"help": "loss type used for training"},
+    )
 
 
 @dataclass
@@ -374,8 +378,8 @@ def train(model, tokenizer, train_dataset, eval_dataset, script_args, training_a
         max_prompt_length=training_args.model_max_length // 2,
         max_target_length=training_args.model_max_length // 2,
         generate_during_eval=script_args.generate_during_eval,
+        loss_type=script_args.loss_type,
         # New parameters
-        loss_type="generalized_sigmoid",
         generation_reuse_multiplier=script_args.generation_reuse_multiplier,
         generation_num_batches=script_args.generation_num_batches,
         per_device_generation_batch_size=script_args.per_device_generation_batch_size,
@@ -443,9 +447,11 @@ def main():
             "gamma": script_args.gamma,
             "dro": script_args.dro,
             "omega": script_args.omega,
+            "loss_type": script_args.loss_type,
         },
     )
     training_args.hub_model_id = HUGGINGFACE_CONFIGS["prefix"]["models"] + run
+    print(f"Hub model id: {training_args.hub_model_id}")
     training_args.output_dir = os.path.join(
         CACHE_CONFIGS["checkpoint_cache_dir"], run + "_" + HASHCODE
     )

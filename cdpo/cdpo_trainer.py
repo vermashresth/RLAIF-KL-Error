@@ -193,7 +193,8 @@ class GeneralizedDPOTrainer(Trainer):
             "ipo",
             "kto_pair",
             "generalized_sigmoid",
-        ] = "generalized_sigmoid",
+            "generalized_sigmoid_smooth_label",
+        ] = "generalized_sigmoid_smooth_label",
         generation_reuse_multiplier: Optional[int] = None,
         generation_num_batches: Optional[int] = None,
         per_device_generation_batch_size: Optional[int] = None,
@@ -1148,9 +1149,27 @@ class GeneralizedDPOTrainer(Trainer):
                     * (F.logsigmoid(self.beta * logits) * self._dpp_sampling_mask) ** 2
                 )
         ##############################
+        elif self.loss_type == "generalized_sigmoid_smooth_label":
+            # Combine label smoothing with generalized sigmoid
+            base_loss = (
+                -F.logsigmoid(self.beta * logits) * (1 - self.label_smoothing)
+                - F.logsigmoid(-self.beta * logits) * self.label_smoothing
+            )
+            losses = base_loss
+            if train_eval == "train":
+                losses -= (
+                    0.5
+                    * self.rho
+                    * (F.logsigmoid(self.beta * logits) * self._ddp_sampling_mask) ** 2
+                )
+                losses -= (
+                    0.5
+                    * self.pi
+                    * (F.logsigmoid(self.beta * logits) * self._dpp_sampling_mask) ** 2
+                )
         else:
             raise ValueError(
-                f"Unknown loss type: {self.loss_type}. Should be one of ['sigmoid', 'hinge', 'ipo', 'kto_pair']"
+                f"Unknown loss type: {self.loss_type}. Should be one of ['sigmoid', 'hinge', 'ipo', 'kto_pair', 'generalized_sigmoid', 'generalized_sigmoid_smooth_label']"
             )
 
         ##############################

@@ -1782,9 +1782,13 @@ class GeneralizedDPOTrainer(Trainer):
             model, [f for f, m in zip(generated_features, prompt_origin_mask) if m]
         )
 
-        self._dpr_generation_outputs = self._label_generated_by_reward(
-            [f for f, m in zip(generated_features, prompt_origin_mask) if not m]
-        )
+        # Handle DPR and DRO-DPR outputs using reward model
+        non_dpp_features = [f for f, m in zip(generated_features, prompt_origin_mask) if not m]
+        dpr_features = non_dpp_features[:len(self._dpr_generation_inputs)]
+        dro_dpr_features = non_dpp_features[len(self._dpr_generation_inputs):]
+        
+        self._dpr_generation_outputs = self._label_generated_by_reward(dpr_features)
+        self._dro_dpr_generation_outputs = self._label_generated_by_reward(dro_dpr_features)
 
         # Duplicate the generated outputs and shuffle
         self._dpp_generation_outputs = [
@@ -1797,8 +1801,14 @@ class GeneralizedDPOTrainer(Trainer):
             for f in self._dpr_generation_outputs
             for _ in range(self.generation_reuse_multiplier)
         ]
+        self._dro_dpr_generation_outputs = [
+            f
+            for f in self._dro_dpr_generation_outputs
+            for _ in range(self.generation_reuse_multiplier)
+        ]
         random.shuffle(self._dpp_generation_outputs)
         random.shuffle(self._dpr_generation_outputs)
+        random.shuffle(self._dro_dpr_generation_outputs)
 
         # Clear generation input buffers
         self._dpp_generation_inputs = []

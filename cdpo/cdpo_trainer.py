@@ -1049,6 +1049,79 @@ class GeneralizedDPOTrainer(Trainer):
 
         return concatenated_batch
 
+
+    def optimize_p_on_kl_boundary(self, q: torch.Tensor, logits: torch.Tensor, nu: float, tol=1e-6, max_iter=50):
+        """
+        Solves for optimal p ∈ (0,1) that maximizes:
+            f(p) = p * l+ + (1 - p) * l-
+        under constraint:
+            KL(p || q) ≤ nu
+
+        Uses binary search on each element to find boundary point if needed.
+        """
+
+        def kl_binary(p, q, eps=1e-10):
+            """
+            Computes the binary KL divergence: KL(p || q)
+            Clamp to avoid log(0).
+            """
+            p = torch.clamp(p, eps, 1 - eps)
+            q = torch.clamp(q, eps, 1 - eps)
+            return p * torch.log(p / q) + (1 - p) * torch.log((1 - p) / (1 - q))
+
+        # Compute logits-scaled loss terms
+        beta_logits = self.beta * logits
+        l_plus = -torch.nn.functional.logsigmoid(beta_logits)      # -log(sigmoid(beta * logit))
+        l_minus = -torch.nn.functional.logsigmoid(-beta_logits)     # -log(sigmoid(-beta * logit))
+
+        # Slope of the linear objective: determines which direction improves the objective
+        slope = l_plus - l_minus
+
+        # Unconstrained maximizer: p = 1 if slope > 0, else p = 0
+        p_star = (slope > 0).float()
+
+        # Check if unconstrained maximizer satisfies the KL constraint
+        kl_star = kl_binary(p_star, q)
+        feasible = kl_star <= nu
+
+        # Final p initialized to p_star (will be replaced where infeasible)
+        p_final = p_star.clone()
+        needs_search = ~feasible  # Only search for those violating the constraint
+
+        # Binary search bounds for each element
+        p_low = torch.zeros_like(q)
+        p_high = torch.ones_like(q)
+
+        # Begin binary search for infeasible elements
+        for _ in range(max_iter):
+            p_mid = (p_low + p_high) / 2
+            kl_mid = kl_binary(p_mid, q)
+
+            # If slope > 0, we want to increase p as much as KL allows
+            # If slope < 0, we want to decrease p as much as KL allows
+            increase_p = slope > 0
+
+            # Whether the current mid point satisfies KL constraint
+            cond = kl_mid <= nu
+
+            # Determine which entries are done (sufficiently converged)
+            converged = (p_high - p_low) < tol
+            active = needs_search & ~converged  # Work only on active elements
+
+            # Update bounds for binary search based on direction and constraint status
+            p_low = torch.where(active & increase_p & cond, p_mid, p_low)
+            p_high = torch.where(active & increase_p & ~cond, p_mid, p_high)
+            p_high = torch.where(active & ~increase_p & cond, p_mid, p_high)
+            p_low = torch.where(active & ~increase_p & ~cond, p_mid, p_low)
+
+            # Early exit if all have converged
+            if active.sum() == 0:
+                break
+
+        # For elements where binary search was needed, set final value to midpoint
+        p_final = torch.where(needs_search, (p_low + p_high) / 2, p_final)
+        return p_final
+
     def dpo_loss(
         self,
         policy_chosen_logps: torch.FloatTensor,
@@ -1083,19 +1156,19 @@ class GeneralizedDPOTrainer(Trainer):
         logits = pi_logratios - ref_logratios
 
         ##############################
-        # DDP
-        if train_eval == "train":
-            # Probability of swithching the chosen and rejected responses
-            # Which are independent Bernoulli random variables with probability 1 - \sigmoid(\beta * logits)
-            policy_preference_switching_mask = (
-                torch.bernoulli(1 - F.sigmoid(self.beta * logits))
-                .bool()
-                .to(logits.device)
-            )
-            # If both mixing and switching Bernoulli variables of a sample are 1, then the chosen and rejected responses are switched
-            logits = (
-                1 - 2 * self._ddp_sampling_mask * policy_preference_switching_mask
-            ) * logits
+        # # DDP
+        # if train_eval == "train":
+        #     # Probability of swithching the chosen and rejected responses
+        #     # Which are independent Bernoulli random variables with probability 1 - \sigmoid(\beta * logits)
+        #     policy_preference_switching_mask = (
+        #         torch.bernoulli(1 - F.sigmoid(self.beta * logits))
+        #         .bool()
+        #         .to(logits.device)
+        #     )
+        #     # If both mixing and switching Bernoulli variables of a sample are 1, then the chosen and rejected responses are switched
+        #     logits = (
+        #         1 - 2 * self._ddp_sampling_mask * policy_preference_switching_mask
+        #     ) * logits
         ##############################
 
         # The beta is a temperature parameter for the DPO loss, typically something in the range of 0.1 to 0.5.
@@ -1156,6 +1229,53 @@ class GeneralizedDPOTrainer(Trainer):
                 - F.logsigmoid(-self.beta * logits) * self.label_smoothing
             )
             losses = base_loss
+            if train_eval == "train":
+                losses -= (
+                    0.5
+                    * self.rho
+                    * (F.logsigmoid(self.beta * logits) * self._ddp_sampling_mask) ** 2
+                )
+                losses -= (
+                    0.5
+                    * self.pi
+                    * (F.logsigmoid(self.beta * logits) * self._dpp_sampling_mask) ** 2
+                )
+        ##############################
+        elif self.loss_type == "generalized_sigmoid_dynamic_smooth_label":
+            # print('chosen rejected probs', chosen_rejected_probs.shape)
+            # Combine label smoothing with generalized sigmoid
+            base_loss = (
+                -F.logsigmoid(self.beta * logits) * chosen_rejected_probs
+                - F.logsigmoid(-self.beta * logits) * (1 - chosen_rejected_probs)
+            )
+            old_loss = (
+                -F.logsigmoid(self.beta * logits) * (1 - self.label_smoothing)
+                - F.logsigmoid(-self.beta * logits) * self.label_smoothing
+            )
+            losses = base_loss
+            if train_eval == "train":
+                losses -= (
+                    0.5
+                    * self.rho
+                    * (F.logsigmoid(self.beta * logits) * self._ddp_sampling_mask) ** 2
+                )
+                losses -= (
+                    0.5
+                    * self.pi
+                    * (F.logsigmoid(self.beta * logits) * self._dpp_sampling_mask) ** 2
+                )
+        elif self.loss_type == "generalized_sigmoid_dro_dynamic_smooth_label":
+            # Solve DRO optimization to get adjusted probabilities
+            nu = 1 # for 0, p=q
+            # nu = 1 is reasonable, nu cpould be anything positive
+            # q could be less than 0.5, chosen could be because of sampling
+
+            adjusted_chosen_rejected_probs = self.optimize_p_on_kl_boundary(chosen_rejected_probs, logits, nu=nu)
+            smooth_dro_loss = (
+                -F.logsigmoid(self.beta * logits) * adjusted_chosen_rejected_probs
+                - F.logsigmoid(-self.beta * logits) * (1 - adjusted_chosen_rejected_probs)
+            )
+            losses = smooth_dro_loss
             if train_eval == "train":
                 losses -= (
                     0.5
@@ -1351,6 +1471,7 @@ class GeneralizedDPOTrainer(Trainer):
 
         ##############################
         # DDP & DPP & DPR
+        chosen_rejected_probs = torch.ones(len(batch["prompt"]), device=self.accelerator.device)
         if train_eval == "train":
 
             # Random state alreay synctronized and mask will be the same across all GPUs
@@ -1372,61 +1493,73 @@ class GeneralizedDPOTrainer(Trainer):
 
             # DPP & DPR
             if (self._dpp_sampling_mask | self._dpr_sampling_mask | self._dro_dpr_sampling_mask).sum() > 0:
-                batch, chosen_rejected_probs = self.generate_samples(model, batch)
-            else:
-                # For regular training, compute probabilities using the reward model if available
-                if hasattr(self, 'reward_model') and self.reward_model is not None:
-                    with torch.no_grad():
-                        chosen_output = self.reward_model(
-                            **self.reward_tokenizer(
-                                [p + c for p, c in zip(batch["prompt"], batch["chosen"])],
-                                truncation=True,
-                                padding=True,
-                                return_tensors="pt",
-                            ).to(self.reward_model.device)
-                        )
-                        rejected_output = self.reward_model(
-                            **self.reward_tokenizer(
-                                [p + r for p, r in zip(batch["prompt"], batch["rejected"])],
-                                truncation=True,
-                                padding=True,
-                                return_tensors="pt",
-                            ).to(self.reward_model.device)
-                        )
-                        
-                        if self.reward_model_id.startswith("PKU-Alignment"):
-                            chosen_output, rejected_output = (
-                                chosen_output.end_scores.cpu().flatten(),
-                                rejected_output.end_scores.cpu().flatten(),
-                            )
-                        elif self.reward_model_id.startswith("openbmb"):
-                            chosen_output, rejected_output = (
-                                chosen_output.cpu().flatten(),
-                                rejected_output.cpu().flatten(),
-                            )
-                        elif self.reward_model_id.startswith("OpenAssistant"):
-                            chosen_output, rejected_output = (
-                                chosen_output.logits.cpu().flatten(),
-                                rejected_output.logits.cpu().flatten(),
-                            )
-                        else:
-                            raise RuntimeError("Unknown reward model")
+                batch = self.generate_samples(model, batch)
 
-                        # Compute probability that chosen > rejected
-                        if self.reward_model_id.startswith("OpenAssistant"):
-                            probs = F.softmax(torch.stack([chosen_output, rejected_output], dim=-1), dim=-1)
-                            chosen_rejected_probs = probs[:, 0] if not self.reward_model_reverse else probs[:, 1]
-                        else:
-                            diff = chosen_output - rejected_output
-                            if self.reward_model_reverse:
-                                diff = -diff
-                            chosen_rejected_probs = torch.sigmoid(diff)
-                else:
-                    chosen_rejected_probs = None
-        else:
-            chosen_rejected_probs = None
 
-        ##############################
+        # Compute chosen-rejected probabilities for DPR and DRO-DPR samples
+        if train_eval == "train" and hasattr(self, 'reward_model') and self.reward_model is not None:
+            # Only compute probabilities for DPR and DRO-DPR samples
+            dpr_dro_mask = (self._dpr_sampling_mask | self._dro_dpr_sampling_mask)
+            if dpr_dro_mask.sum() > 0:
+                # Load model to GPU
+                self.reward_model = self.reward_model.to(self.accelerator.device)
+                with torch.no_grad():
+                    chosen_output = self.reward_model(
+                        **self.reward_tokenizer(
+                            [p + c for p, c, m in zip(batch["prompt"], batch["chosen"], dpr_dro_mask) if m],
+                            truncation=True,
+                            padding=True,
+                            return_tensors="pt",
+                        ).to(self.reward_model.device)
+                    )
+                    rejected_output = self.reward_model(
+                        **self.reward_tokenizer(
+                            [p + r for p, r, m in zip(batch["prompt"], batch["rejected"], dpr_dro_mask) if m],
+                            truncation=True,
+                            padding=True,
+                            return_tensors="pt",
+                        ).to(self.reward_model.device)
+                    )
+                    
+                    if self.reward_model_id.startswith("PKU-Alignment"):
+                        chosen_output, rejected_output = (
+                            chosen_output.end_scores.cpu().flatten(),
+                            rejected_output.end_scores.cpu().flatten(),
+                        )
+                    elif self.reward_model_id.startswith("openbmb"):
+                        chosen_output, rejected_output = (
+                            chosen_output.cpu().flatten(),
+                            rejected_output.cpu().flatten(),
+                        )
+                    elif self.reward_model_id.startswith("OpenAssistant"):
+                        chosen_output, rejected_output = (
+                            chosen_output.logits.cpu().flatten(),
+                            rejected_output.logits.cpu().flatten(),
+                        )
+                    else:
+                        raise RuntimeError("Unknown reward model")
+                    # if chosen_outputrejected_output:
+                    #     print('Chosen output: ', chosen_output)
+                    #     print('Rejected output: ', rejected_output)
+                    #     print('prompt: ', batch["prompt"])
+                    #     print('\trejected #########', batch["rejected"])
+                    #     print('\tchosen ###########', batch['chosen'])
+                    # Compute probability that chosen > rejected
+                    if self.reward_model_id.startswith("OpenAssistant"):
+                        probs = F.softmax(torch.stack([chosen_output, rejected_output], dim=-1), dim=-1)
+                        batch_probs = probs[:, 0] if not self.reward_model_reverse else probs[:, 1]
+                    else:
+                        diff = chosen_output - rejected_output
+                        if self.reward_model_reverse:
+                            diff = -diff
+                        batch_probs = torch.sigmoid(diff)
+
+                    # Create a tensor of zeros for all samples
+                    chosen_rejected_probs = torch.zeros(len(batch["prompt"]), device=self.accelerator.device)
+                    # Fill in probabilities only for DPR and DRO-DPR samples
+                    chosen_rejected_probs[dpr_dro_mask] = batch_probs.to(torch.float32).to(device=self.accelerator.device)
+                # Offload model from GPU
+                # self.reward_model = self.reward_model.cpu()
 
         (
             policy_chosen_logps,
@@ -1970,7 +2103,6 @@ class GeneralizedDPOTrainer(Trainer):
 
         chosen_scores = torch.cat(chosen_scores, dim=0)
         rejected_scores = torch.cat(rejected_scores, dim=0)
-        probabilities = torch.cat(pair_probs, dim=0)
 
         # Switch based on scores but store probabilities
         for f, cs, rs in zip(generated_features, chosen_scores, rejected_scores):
@@ -1979,7 +2111,7 @@ class GeneralizedDPOTrainer(Trainer):
             ):
                 f["chosen"], f["rejected"] = f["rejected"], f["chosen"]
 
-        return generated_features, probabilities
+        return generated_features
 
     ##############################
 

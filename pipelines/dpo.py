@@ -183,6 +183,8 @@ def load_and_format_dataset(script_args):
 
 # Load model and tokenizer and configure ZeRO, LoRA for training
 def load_and_config_model(script_args, training_args):
+    print('Loading model')
+    print('Base model:', MODEL_CONFIGS[script_args.model])
     config = AutoConfig.from_pretrained(
         MODEL_CONFIGS[script_args.model],
         cache_dir=script_args.model_cache_dir,
@@ -303,6 +305,44 @@ def train(model, tokenizer, train_dataset, eval_dataset, script_args, training_a
         raise ValueError(f"Invalid pipeline name {script_args.pipeline}")
     assert 0 <= (script_args.r + script_args.p + script_args.g + script_args.dro) <= 1
     training_args.num_train_epochs /= 1 - script_args.r - script_args.p - script_args.g - script_args.dro
+    
+    # Training
+    trainer = GeneralizedDPOTrainer(
+        model,
+        # Two adapters as the default and reference models
+        None,
+        model_adapter_name="default",
+        ref_adapter_name="reference",
+        args=training_args,
+        beta=script_args.beta,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
+        tokenizer=tokenizer,
+        max_length=training_args.model_max_length,
+        max_prompt_length=training_args.model_max_length // 2,
+        max_target_length=training_args.model_max_length // 2,
+        generate_during_eval=script_args.generate_during_eval,
+        loss_type=script_args.loss_type,
+        # New parameters
+        generation_reuse_multiplier=script_args.generation_reuse_multiplier,
+        generation_num_batches=script_args.generation_num_batches,
+        per_device_generation_batch_size=script_args.per_device_generation_batch_size,
+        generation_temperature=script_args.generation_temperature,
+        reward_model_id=None,
+        reward_model=None,
+        reward_tokenizer=None,
+        reward_model_reverse=None,
+        per_device_evalreward_batch_size=script_args.per_device_evalreward_batch_size,
+        r=script_args.r,
+        rho=script_args.rho,
+        p=script_args.p,
+        pi=script_args.pi,
+        g=script_args.g,
+        gamma=script_args.gamma,
+        dro=script_args.dro,
+        omega=script_args.omega,
+    )
+
     reward_model, reward_tokenizer, reward_model_reverse = None, None, None
     for dataset_prefix in REWARD_CONFIGS.keys():
         if script_args.dataset.startswith(dataset_prefix):
@@ -311,6 +351,7 @@ def train(model, tokenizer, train_dataset, eval_dataset, script_args, training_a
             # Load reward model
             if script_args.g > 0 or script_args.dro > 0:
                 if reward_model_id.startswith("PKU-Alignment"):
+                    print('Loading PKU-Alignment RM')
                     reward_model = AutoModelForScore.from_pretrained(
                         reward_model_id,
                         torch_dtype=torch.bfloat16,
@@ -341,6 +382,7 @@ def train(model, tokenizer, train_dataset, eval_dataset, script_args, training_a
                         cache_dir=script_args.model_cache_dir,
                     )
                 elif reward_model_id.startswith("openbmb"):
+                    print('Loading openbmb RM')
                     reward_model = AutoModel.from_pretrained(
                         reward_model_id,
                         torch_dtype=torch.bfloat16,
@@ -362,42 +404,10 @@ def train(model, tokenizer, train_dataset, eval_dataset, script_args, training_a
                 reward_model = reward_model.cpu()
                 reward_tokenizer.pad_token = reward_tokenizer.eos_token
             break
-    # Training
-    trainer = GeneralizedDPOTrainer(
-        model,
-        # Two adapters as the default and reference models
-        None,
-        model_adapter_name="default",
-        ref_adapter_name="reference",
-        args=training_args,
-        beta=script_args.beta,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        tokenizer=tokenizer,
-        max_length=training_args.model_max_length,
-        max_prompt_length=training_args.model_max_length // 2,
-        max_target_length=training_args.model_max_length // 2,
-        generate_during_eval=script_args.generate_during_eval,
-        loss_type=script_args.loss_type,
-        # New parameters
-        generation_reuse_multiplier=script_args.generation_reuse_multiplier,
-        generation_num_batches=script_args.generation_num_batches,
-        per_device_generation_batch_size=script_args.per_device_generation_batch_size,
-        generation_temperature=script_args.generation_temperature,
-        reward_model_id=reward_model_id,
-        reward_model=reward_model,
-        reward_tokenizer=reward_tokenizer,
-        reward_model_reverse=reward_model_reverse,
-        per_device_evalreward_batch_size=script_args.per_device_evalreward_batch_size,
-        r=script_args.r,
-        rho=script_args.rho,
-        p=script_args.p,
-        pi=script_args.pi,
-        g=script_args.g,
-        gamma=script_args.gamma,
-        dro=script_args.dro,
-        omega=script_args.omega,
-    )
+    trainer.reward_model_id=reward_model_id
+    trainer.reward_model=reward_model
+    trainer.reward_tokenizer=reward_tokenizer
+    trainer.reward_model_reverse=reward_model_reverse
 
     train_dataset_size = len(trainer.train_dataset)
     per_device_train_batch_size = training_args.per_device_train_batch_size

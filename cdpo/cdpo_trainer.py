@@ -457,11 +457,11 @@ class GeneralizedDPOTrainer(Trainer):
         with PartialState().local_main_process_first():
             # tokenize the dataset
             train_dataset = train_dataset.map(
-                self.tokenize_row, num_proc=self.dataset_num_proc
+                self.tokenize_row, num_proc= self.dataset_num_proc, 
             )
             if eval_dataset is not None:
                 eval_dataset = eval_dataset.map(
-                    self.tokenize_row, num_proc=self.dataset_num_proc
+                    self.tokenize_row, num_proc=self.dataset_num_proc, 
                 )
 
         super().__init__(
@@ -1050,77 +1050,76 @@ class GeneralizedDPOTrainer(Trainer):
         return concatenated_batch
 
 
-    def optimize_p_on_kl_boundary(self, q: torch.Tensor, logits: torch.Tensor, nu: float, tol=1e-6, max_iter=50):
+    def optimize_p_on_kl_boundary(self, q: torch.Tensor, logits: torch.Tensor, nu: float, grid_size: int = 100):
         """
         Solves for optimal p ∈ (0,1) that maximizes:
             f(p) = p * l+ + (1 - p) * l-
         under constraint:
             KL(p || q) ≤ nu
 
-        Uses binary search on each element to find boundary point if needed.
+        Simple grid search approach: compute constraints, compute objectives, find argmax.
+        
+        Args:
+            q: Reference probabilities, must be in (0, 1)
+            logits: Model logits for computing loss terms
+            nu: KL divergence budget (must be non-negative)
+            grid_size: Number of grid points to evaluate (default: 100 for 0.01 resolution)
+            
+        Returns:
+            Optimal probabilities p that maximize the objective under KL constraint
         """
+        # Input validation
+        if nu < 0:
+            raise ValueError(f"KL budget nu must be non-negative, got {nu}")
+        
+        # Ensure tensors are on the same device and have compatible shapes
+        q = q.to(logits.device)
+        if q.shape != logits.shape:
+            raise ValueError(f"Shape mismatch: q.shape={q.shape}, logits.shape={logits.shape}")
+        
+        # Use numerically stable epsilon
+        eps = torch.finfo(q.dtype).eps * 10
+        q_clamped = torch.clamp(q, eps, 1 - eps)
 
-        def kl_binary(p, q, eps=1e-10):
-            """
-            Computes the binary KL divergence: KL(p || q)
-            Clamp to avoid log(0).
-            """
-            p = torch.clamp(p, eps, 1 - eps)
-            q = torch.clamp(q, eps, 1 - eps)
-            return p * torch.log(p / q) + (1 - p) * torch.log((1 - p) / (1 - q))
-
-        # Compute logits-scaled loss terms
+        # Create grid of candidate p values
+        p_grid = torch.linspace(0.5, 1 - eps, grid_size, device=q.device, dtype=q.dtype)
+        
+        # Expand dimensions for broadcasting: [batch_size, 1] and [1, grid_size]
+        q_expanded = q_clamped.unsqueeze(-1)  # [batch_size, 1]
+        p_expanded = p_grid.unsqueeze(0)      # [1, grid_size]
+        
+        # Step 1: Compute KL constraints for all grid points
+        # KL(p||q) = p*log(p/q) + (1-p)*log((1-p)/(1-q))
+        p_safe = torch.clamp(p_expanded, eps, 1 - eps)
+        q_safe = torch.clamp(q_expanded, eps, 1 - eps)
+        
+        kl_constraints = (p_safe * (torch.log(p_safe) - torch.log(q_safe)) + 
+                         (1 - p_safe) * (torch.log(1 - p_safe) - torch.log(1 - q_safe)))
+        
+        # Step 2: Compute objectives for all grid points
+        # f(p) = p * l+ + (1-p) * l- = l- + p * (l+ - l-)
         beta_logits = self.beta * logits
-        l_plus = -torch.nn.functional.logsigmoid(beta_logits)      # -log(sigmoid(beta * logit))
-        l_minus = -torch.nn.functional.logsigmoid(-beta_logits)     # -log(sigmoid(-beta * logit))
-
-        # Slope of the linear objective: determines which direction improves the objective
+        l_plus = torch.nn.functional.softplus(-beta_logits)   # -log(sigmoid(beta * logit))
+        l_minus = torch.nn.functional.softplus(beta_logits)   # -log(sigmoid(-beta * logit))
         slope = l_plus - l_minus
+        
+        l_minus_expanded = l_minus.unsqueeze(-1)  # [batch_size, 1]
+        slope_expanded = slope.unsqueeze(-1)      # [batch_size, 1]
+        objectives = l_minus_expanded + p_expanded * slope_expanded  # [batch_size, grid_size]
+        
+        # Step 3: Apply constraints by masking infeasible points with -inf
+        constraint_satisfied = kl_constraints <= nu + eps
+        objectives_masked = torch.where(constraint_satisfied, objectives, torch.full_like(objectives, float('-inf')))
+        
+        # Step 4: Find argmax for each batch element
+        best_indices = torch.argmax(objectives_masked, dim=1)  # [batch_size]
+        p_optimal = p_grid[best_indices]  # [batch_size]
 
-        # Unconstrained maximizer: p = 1 if slope > 0, else p = 0
-        p_star = (slope > 0).float()
-
-        # Check if unconstrained maximizer satisfies the KL constraint
-        kl_star = kl_binary(p_star, q)
-        feasible = kl_star <= nu
-
-        # Final p initialized to p_star (will be replaced where infeasible)
-        p_final = p_star.clone()
-        needs_search = ~feasible  # Only search for those violating the constraint
-
-        # Binary search bounds for each element
-        p_low = torch.zeros_like(q)
-        p_high = torch.ones_like(q)
-
-        # Begin binary search for infeasible elements
-        for _ in range(max_iter):
-            p_mid = (p_low + p_high) / 2
-            kl_mid = kl_binary(p_mid, q)
-
-            # If slope > 0, we want to increase p as much as KL allows
-            # If slope < 0, we want to decrease p as much as KL allows
-            increase_p = slope > 0
-
-            # Whether the current mid point satisfies KL constraint
-            cond = kl_mid <= nu
-
-            # Determine which entries are done (sufficiently converged)
-            converged = (p_high - p_low) < tol
-            active = needs_search & ~converged  # Work only on active elements
-
-            # Update bounds for binary search based on direction and constraint status
-            p_low = torch.where(active & increase_p & cond, p_mid, p_low)
-            p_high = torch.where(active & increase_p & ~cond, p_mid, p_high)
-            p_high = torch.where(active & ~increase_p & cond, p_mid, p_high)
-            p_low = torch.where(active & ~increase_p & ~cond, p_mid, p_low)
-
-            # Early exit if all have converged
-            if active.sum() == 0:
-                break
-
-        # For elements where binary search was needed, set final value to midpoint
-        p_final = torch.where(needs_search, (p_low + p_high) / 2, p_final)
-        return p_final
+        # Override p_optimal with the original q if no feasible solution found
+        p_optimal = torch.where(constraint_satisfied.any(dim=1), p_optimal, q_clamped)
+        
+        # Final safety clamp and return
+        return torch.clamp(p_optimal, eps, 1 - eps)
 
     def dpo_loss(
         self,
@@ -1266,12 +1265,36 @@ class GeneralizedDPOTrainer(Trainer):
                 )
         elif self.loss_type == "generalized_sigmoid_dro_dynamic_smooth_label":
             # Solve DRO optimization to get adjusted probabilities
+            nu = 0.1 # for 0, p=q
+            # nu = 1 is reasonable, nu cpould be anything positive
+            # q could be less than 0.5, chosen could be because of sampling
+
+     
+            adjusted_chosen_rejected_probs = self.optimize_p_on_kl_boundary(chosen_rejected_probs, logits.detach(), nu=nu)
+            smooth_dro_loss = (
+                -F.logsigmoid(self.beta * logits) * adjusted_chosen_rejected_probs
+                - F.logsigmoid(-self.beta * logits) * (1 - adjusted_chosen_rejected_probs)
+            )
+            losses = smooth_dro_loss
+            if train_eval == "train":
+                losses -= (
+                    0.5
+                    * self.rho
+                    * (F.logsigmoid(self.beta * logits) * self._ddp_sampling_mask) ** 2
+                )
+                losses -= (
+                    0.5
+                    * self.pi
+                    * (F.logsigmoid(self.beta * logits) * self._dpp_sampling_mask) ** 2
+                )
+        elif self.loss_type == "rev_generalized_sigmoid_dro_dynamic_smooth_label":
+            # Solve DRO optimization to get adjusted probabilities
             nu = 1 # for 0, p=q
             # nu = 1 is reasonable, nu cpould be anything positive
             # q could be less than 0.5, chosen could be because of sampling
 
             adjusted_chosen_rejected_probs = self.optimize_p_on_kl_boundary(chosen_rejected_probs, logits, nu=nu)
-            smooth_dro_loss = (
+            smooth_dro_loss = -(
                 -F.logsigmoid(self.beta * logits) * adjusted_chosen_rejected_probs
                 - F.logsigmoid(-self.beta * logits) * (1 - adjusted_chosen_rejected_probs)
             )
@@ -1471,7 +1494,12 @@ class GeneralizedDPOTrainer(Trainer):
 
         ##############################
         # DDP & DPP & DPR
-        chosen_rejected_probs = torch.ones(len(batch["prompt"]), device=self.accelerator.device)
+        if "bt_prob" in batch:
+            chosen_rejected_probs = torch.tensor(batch["bt_prob"], 
+                                                 dtype=torch.float32, device=self.accelerator.device)
+        else:
+            chosen_rejected_probs = torch.ones(len(batch["prompt"]), device=self.accelerator.device)
+
         if train_eval == "train":
 
             # Random state alreay synctronized and mask will be the same across all GPUs

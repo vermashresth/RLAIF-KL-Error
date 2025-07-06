@@ -1082,7 +1082,7 @@ class GeneralizedDPOTrainer(Trainer):
         q_clamped = torch.clamp(q, eps, 1 - eps)
 
         # Create grid of candidate p values
-        p_grid = torch.linspace(0.5, 1 - eps, grid_size, device=q.device, dtype=q.dtype)
+        p_grid = torch.linspace(eps, 1 - eps, grid_size, device=q.device, dtype=q.dtype)
         
         # Expand dimensions for broadcasting: [batch_size, 1] and [1, grid_size]
         q_expanded = q_clamped.unsqueeze(-1)  # [batch_size, 1]

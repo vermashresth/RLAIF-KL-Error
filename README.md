@@ -28,6 +28,38 @@ Login into huuggingface - !huggingface-cli login
 ### Step 5: View Results
 1. Inside `./viewer` folder, run `streamlit run app.py` to start the result viewer. Using the UI there to analysis the results.
 
+### Step 6: Evaluate Dataset with Bradley-Terry Probabilities
+You can evaluate preference datasets and compute Bradley-Terry (BT) probabilities using the `evalreward_bt.py` script:
+
+1. **Basic usage** - Evaluate a specific dataset split:
+   ```bash
+   python pipelines/evalreward_bt.py \
+     --run_name your_experiment_name \
+     --tag your_tag \
+     --split default \
+     --score_model_id PKU-Alignment/beaver-7b-v1.0-reward
+   ```
+
+2. **Process all splits** in the dataset:
+   ```bash
+   python pipelines/evalreward_bt.py \
+     --run_name your_experiment_name \
+     --tag your_tag \
+     --process_all_splits \
+     --score_model_id PKU-Alignment/beaver-7b-v1.0-reward
+   ```
+
+3. **Supported reward models**:
+   - PKU-Alignment models (e.g., `PKU-Alignment/beaver-7b-v1.0-reward`)
+   - OpenBMB models (e.g., `openbmb/Eurus-RM-7b`)
+   - OpenAssistant models (e.g., `OpenAssistant/reward-model-deberta-v3-large-v2`)
+
+4. **Expected dataset format**: The dataset should have columns named `prompt`, `chosen`, and `rejected`.
+
+5. **Output**: The script adds three columns to your dataset:
+   - `chosen_score`: Reward score for the chosen response
+   - `rejected_score`: Reward score for the rejected response  
+   - `bt_prob`: Bradley-Terry probability computed as sigmoid(chosen_score - rejected_score)
 
 ### Training time and memory requirements.
 The approximate training time and memory requirements of each SAIL training on three models are: Qwen1.5-0.5B: 1-4 hours with 4*A40 GPUs; Phi-3-3.8B: 2-8 hours with 4*RTX6000Ada GPUs; Llama-3-8B: 2-12 hours with 4*A100 GPUs.

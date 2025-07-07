@@ -49,19 +49,14 @@ You can evaluate preference datasets and compute Bradley-Terry (BT) probabilitie
      --score_model_id PKU-Alignment/beaver-7b-v1.0-reward
    ```
 
-3. **Supported reward models**:
-   - PKU-Alignment models (e.g., `PKU-Alignment/beaver-7b-v1.0-reward`)
-   - OpenBMB models (e.g., `openbmb/Eurus-RM-7b`)
-   - OpenAssistant models (e.g., `OpenAssistant/reward-model-deberta-v3-large-v2`)
+3. **Expected dataset format**: The dataset should have columns named `prompt`, `chosen`, and `rejected`.
 
-4. **Expected dataset format**: The dataset should have columns named `prompt`, `chosen`, and `rejected`.
-
-5. **Output**: The script adds three columns to your dataset:
+4. **Output**: The script adds three columns to your dataset:
    - `chosen_score`: Reward score for the chosen response
    - `rejected_score`: Reward score for the rejected response  
    - `bt_prob`: Bradley-Terry probability computed as sigmoid(chosen_score - rejected_score)
 
-6. **Troubleshooting**:
+5. **Troubleshooting**:
    - **ModuleNotFoundError: safe_rlhf**: Install the safe-rlhf library for PKU-Alignment models
    - **AttributeError: huggingface**: Configure `configs/services/huggingface.yaml` with your HuggingFace token
    - **Dataset not found**: Ensure your dataset is uploaded to HuggingFace Hub with the correct naming

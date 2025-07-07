@@ -30,3 +30,5 @@ MIX:
   - g
   - gamma
   - loss_type
+evalreward_bt:
+  - score_model_id

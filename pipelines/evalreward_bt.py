@@ -75,8 +75,8 @@ class ScriptArguments:
         metadata={"help": "allow truncation for tokenizer"},
     )
     score_model_id: str = field(
-        default="PKU-Alignment/beaver-7b-v1.0-reward",
-        metadata={"help": "model id for scoring"},
+        default="none",
+        metadata={"help": "model id for scoring, do not change"},
     )
     model_cache_dir: str = field(
         default=CACHE_CONFIGS["model_cache_dir"],
@@ -120,59 +120,82 @@ def load_generated_dataset(script_args):
 # Load model and tokenizer for inference
 def load_score_model(script_args):
     print(f"Loading score model: {script_args.score_model_id}")
-    if script_args.score_model_id.startswith("PKU-Alignment"):
-        if not HAS_SAFE_RLHF:
-            raise ImportError("safe_rlhf module is required for PKU-Alignment models. Please install it first.")
-        model = AutoModelForScore.from_pretrained(
-            script_args.score_model_id,
-            torch_dtype=torch.bfloat16,
-            device_map={"": accelerator.local_process_index},
-            # Update transformers package to >=4.38.0 and no need to use trust_remote_code
-            trust_remote_code=False,
-            use_cache=True,
-            cache_dir=script_args.model_cache_dir,
-        )
-        tokenizer = AutoTokenizer.from_pretrained(
-            script_args.score_model_id,
-            model_max_length=script_args.model_max_length,
-            padding_side="left",
-            use_fast=True,
-            cache_dir=script_args.model_cache_dir,
-        )
-    elif script_args.score_model_id.startswith("openbmb"):
-        model = AutoModel.from_pretrained(
-            script_args.score_model_id,
-            torch_dtype=torch.bfloat16,
-            device_map={"": accelerator.local_process_index},
-            # This is needed as EurusRewardModel is not in transformers' model registry
-            trust_remote_code=True,
-            use_cache=True,
-            cache_dir=script_args.model_cache_dir,
-        )
-        tokenizer = AutoTokenizer.from_pretrained(
-            script_args.score_model_id,
-            model_max_length=script_args.model_max_length,
-            padding_side="left",
-            use_fast=True,
-            cache_dir=script_args.model_cache_dir,
-        )
-    elif script_args.score_model_id.startswith("OpenAssistant"):
-        model = AutoModelForSequenceClassification.from_pretrained(
-            script_args.score_model_id,
-            torch_dtype=torch.bfloat16,
-            device_map={"": accelerator.local_process_index},
-            cache_dir=script_args.model_cache_dir,
-        )
-        tokenizer = AutoTokenizer.from_pretrained(
-            script_args.score_model_id,
-            model_max_length=script_args.model_max_length,
-            padding_side="left",
-            use_fast=True,
-            cache_dir=script_args.model_cache_dir,
-        )
-    else:
-        raise ValueError("No reward model found for the dataset")
-    tokenizer.pad_token = tokenizer.eos_token
+    
+    # Generic model loading - try different model classes in order of preference
+    model = None
+    error_messages = []
+    
+    # Common model loading arguments
+    common_args = {
+        "torch_dtype": torch.bfloat16,
+        "device_map": {"": accelerator.local_process_index},
+        "use_cache": True,
+        "cache_dir": script_args.model_cache_dir,
+    }
+    
+    # Try AutoModelForScore first (for PKU-Alignment models)
+    if HAS_SAFE_RLHF:
+        try:
+            model = AutoModelForScore.from_pretrained(
+                script_args.score_model_id,
+                trust_remote_code=False,
+                **common_args
+            )
+            model._model_type = "score"
+        except Exception as e:
+            error_messages.append(f"AutoModelForScore failed: {str(e)}")
+    
+    # Try AutoModelForSequenceClassification
+    if model is None:
+        try:
+            model = AutoModelForSequenceClassification.from_pretrained(
+                script_args.score_model_id,
+                **common_args
+            )
+            model._model_type = "sequence_classification"
+        except Exception as e:
+            error_messages.append(f"AutoModelForSequenceClassification failed: {str(e)}")
+    
+    # Try AutoModel with trust_remote_code=True (for custom models like openbmb)
+    if model is None:
+        try:
+            model = AutoModel.from_pretrained(
+                script_args.score_model_id,
+                trust_remote_code=True,
+                **common_args
+            )
+            model._model_type = "custom"
+        except Exception as e:
+            error_messages.append(f"AutoModel with trust_remote_code failed: {str(e)}")
+    
+    # Try AutoModel without trust_remote_code
+    if model is None:
+        try:
+            model = AutoModel.from_pretrained(
+                script_args.score_model_id,
+                **common_args
+            )
+            model._model_type = "auto"
+        except Exception as e:
+            error_messages.append(f"AutoModel failed: {str(e)}")
+    
+    if model is None:
+        raise ValueError(f"Failed to load model {script_args.score_model_id}. Errors encountered:\n" + "\n".join(error_messages))
+    
+    print(f"Successfully loaded model using {model._model_type} model class")
+    
+    # Load tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(
+        script_args.score_model_id,
+        model_max_length=script_args.model_max_length,
+        padding_side="left",
+        use_fast=True,
+        cache_dir=script_args.model_cache_dir,
+    )
+    
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    
     return model, tokenizer
 
 
@@ -218,20 +241,35 @@ def evaluate_reward(model, tokenizer, response_dataset, script_args):
                 chosen_outputs = model(**chosen_inputs)
                 rejected_outputs = model(**rejected_inputs)
 
-               
-                if script_args.score_model_id.startswith("PKU-Alignment"):
-                    chosen_scores = chosen_outputs.end_scores.cpu().flatten().tolist()
-                    rejected_scores = rejected_outputs.end_scores.cpu().flatten().tolist()
-                elif script_args.score_model_id.startswith("openbmb"):
-                    chosen_scores = chosen_outputs.cpu().flatten().tolist()
-                    rejected_scores = rejected_outputs.cpu().flatten().tolist()
-                elif script_args.score_model_id.startswith("OpenAssistant"):
-                    # AutoModelForSequenceClassification returns logits, we need to get the score for the single class
-                    # For OpenAssistant, output is SequenceClassifierOutput, use logits
-                    chosen_scores = chosen_outputs.logits.cpu().flatten().tolist()  # Flatten all logits
-                    rejected_scores = rejected_outputs.logits.cpu().flatten().tolist()  # Flatten all logits
+                # Generic score extraction based on model type
+                if hasattr(model, '_model_type'):
+                    if model._model_type == "score":
+                        # PKU-Alignment models with AutoModelForScore
+                        chosen_scores = chosen_outputs.end_scores.cpu().flatten().tolist()
+                        rejected_scores = rejected_outputs.end_scores.cpu().flatten().tolist()
+                    elif model._model_type == "sequence_classification":
+                        # AutoModelForSequenceClassification models (e.g., OpenAssistant)
+                        chosen_scores = chosen_outputs.logits.cpu().flatten().tolist()
+                        rejected_scores = rejected_outputs.logits.cpu().flatten().tolist()
+                    elif model._model_type in ["custom", "auto"]:
+                        # Generic AutoModel (e.g., openbmb and other custom models)
+                        chosen_scores = chosen_outputs.cpu().flatten().tolist()
+                        rejected_scores = rejected_outputs.cpu().flatten().tolist()
+                    else:
+                        raise RuntimeError(f"Unknown model type: {model._model_type}")
                 else:
-                    raise RuntimeError("Unknown reward model")
+                    # Fallback: try to extract scores from common output attributes
+                    if hasattr(chosen_outputs, 'end_scores'):
+                        chosen_scores = chosen_outputs.end_scores.cpu().flatten().tolist()
+                        rejected_scores = rejected_outputs.end_scores.cpu().flatten().tolist()
+                    elif hasattr(chosen_outputs, 'logits'):
+                        chosen_scores = chosen_outputs.logits.cpu().flatten().tolist()
+                        rejected_scores = rejected_outputs.logits.cpu().flatten().tolist()
+                    elif torch.is_tensor(chosen_outputs):
+                        chosen_scores = chosen_outputs.cpu().flatten().tolist()
+                        rejected_scores = rejected_outputs.cpu().flatten().tolist()
+                    else:
+                        raise RuntimeError(f"Unable to extract scores from model outputs. Output type: {type(chosen_outputs)}")
 
                 bt_probs = [float(torch.sigmoid(torch.tensor(cs - rs))) for cs, rs in zip(chosen_scores, rejected_scores)]
 

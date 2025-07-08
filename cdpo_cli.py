@@ -221,18 +221,17 @@ def gen(pipeline, model, dataset, tag, gres, extra_params):
 @click.option("-t", "--tag", required=True, help="Tag for the experiment.")
 @click.option("-g", "--gres", default=DEVICE_CONFIGS["local"], help="GPU resources.")
 @click.argument("extra_params", nargs=-1, type=click.UNPROCESSED)
-def evalreward_bt(pipeline, model, dataset, tag, gres, extra_params):
-    """EVALREWARD_BT: evaluate responses with Bradley-Terry probabilities using configurable reward model."""
-    extra_params = parse_extra_args("evalreward_bt", extra_params)
-    run = format_run_name(pipeline, model, dataset, extra_params)
+def label_bt(pipeline, model, dataset, tag, gres, extra_params):
+    """LABEL_BT: label dataset using Bradley-Terry probabilities with configurable reward model."""
+    extra_params = parse_extra_args("label_bt", extra_params)
     accelerate_kwargs = get_accelerate_params("GEN", gres)
     script_kwargs = {
-        "run_name": run,
+        "dataset": dataset,
         "tag": tag,
     }
     script_kwargs |= extra_params
     script_kwargs |= get_batch_size_params("EVALREWARD", gres)
-    call("evalreward_bt", accelerate_kwargs, **script_kwargs)
+    call("label_bt", accelerate_kwargs, **script_kwargs)
 
 
 @click.command(
@@ -312,7 +311,7 @@ cli.add_command(sft)
 cli.add_command(dpo)
 cli.add_command(gen)
 cli.add_command(evalreward)
-cli.add_command(evalreward_bt)
+cli.add_command(label_bt)
 cli.add_command(evalgpt)
 # Utility commands
 cli.add_command(clear)

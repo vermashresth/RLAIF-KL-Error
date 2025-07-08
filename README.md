@@ -28,22 +28,22 @@ Login into huuggingface - !huggingface-cli login
 ### Step 5: View Results
 1. Inside `./viewer` folder, run `streamlit run app.py` to start the result viewer. Using the UI there to analysis the results.
 
-### Step 6: Evaluate Dataset with Bradley-Terry Probabilities
-You can evaluate preference datasets and compute Bradley-Terry (BT) probabilities using the `evalreward_bt.py` script:
+### Step 6: Label Dataset with Bradley-Terry Probabilities
+You can label preference datasets and compute Bradley-Terry (BT) probabilities using the `label_bt.py` script:
 
-1. **Basic usage** - Evaluate a specific dataset split:
+1. **Basic usage** - Label a specific dataset split:
    ```bash
-   python pipelines/evalreward_bt.py \
-     --run_name your_experiment_name \
+   python pipelines/label_bt.py \
+     --dataset openbmb/UltraFeedback \
      --tag your_tag \
-     --split default \
+     --split train \
      --score_model_id PKU-Alignment/beaver-7b-v1.0-reward
    ```
 
 2. **Process all splits** in the dataset:
    ```bash
-   python pipelines/evalreward_bt.py \
-     --run_name your_experiment_name \
+   python pipelines/label_bt.py \
+     --dataset openbmb/UltraFeedback \
      --tag your_tag \
      --process_all_splits \
      --score_model_id PKU-Alignment/beaver-7b-v1.0-reward
@@ -51,12 +51,15 @@ You can evaluate preference datasets and compute Bradley-Terry (BT) probabilitie
 
 3. **Expected dataset format**: The dataset should have columns named `prompt`, `chosen`, and `rejected`.
 
-4. **Output**: The script adds three columns to your dataset:
+4. **Output**: The script adds four columns to your dataset:
    - `chosen_score`: Reward score for the chosen response
    - `rejected_score`: Reward score for the rejected response  
    - `bt_prob`: Bradley-Terry probability computed as sigmoid(chosen_score - rejected_score)
+   - `label`: Bernoulli sample from BT probability (0=chosen preferred, 1=rejected preferred)
 
-5. **Troubleshooting**:
+5. **The labeled dataset is saved with "-labeled" suffix**: The output dataset will be pushed to HuggingFace Hub with the original dataset name plus "-labeled" suffix.
+
+6. **Troubleshooting**:
    - **ModuleNotFoundError: safe_rlhf**: Install the safe-rlhf library for PKU-Alignment models
    - **AttributeError: huggingface**: Configure `configs/services/huggingface.yaml` with your HuggingFace token
    - **Dataset not found**: Ensure your dataset is uploaded to HuggingFace Hub with the correct naming
@@ -71,3 +74,5 @@ Batch size 1
 load best model is off
 Tasks.yaml has q0.5B model
 use flash attention is False in dpo.py, sft.py, generate.py (pipelines)
+
+# Updated README content

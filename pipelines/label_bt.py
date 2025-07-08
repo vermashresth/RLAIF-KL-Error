@@ -40,8 +40,8 @@ logging.set_verbosity_error()
 
 @dataclass
 class ScriptArguments:
-    run_name: str = field(
-        metadata={"help": "run name to evaluate"},
+    dataset: str = field(
+        metadata={"help": "dataset name to load and label"},
     )
     tag: str = field(
         metadata={"help": "tag for the experiment"},
@@ -90,12 +90,16 @@ class ScriptArguments:
         default=False,
         metadata={"help": "process all splits in the dataset instead of just the specified split"},
     )
+    seed: int = field(
+        default=42,
+        metadata={"help": "random seed for Bernoulli sampling"},
+    )
 
 
 # Load dataset and remove unnecessary columns
 def load_generated_dataset(script_args):
     response_dataset = load_dataset(
-        HUGGINGFACE_CONFIGS["prefix"]["evaluations"] + script_args.run_name,
+        script_args.dataset,
         name=script_args.tag,
         cache_dir=script_args.dataset_cache_dir,
     )
@@ -272,14 +276,19 @@ def evaluate_reward(model, tokenizer, response_dataset, script_args):
                         raise RuntimeError(f"Unable to extract scores from model outputs. Output type: {type(chosen_outputs)}")
 
                 bt_probs = [float(torch.sigmoid(torch.tensor(cs - rs))) for cs, rs in zip(chosen_scores, rejected_scores)]
+                
+                # Sample labels from Bernoulli distribution based on BT probabilities
+                # If Bernoulli sample is 1, chosen is preferred (label=0), if 0, rejected is preferred (label=1)
+                bt_labels = [int(np.random.binomial(1, 1 - bt_prob)) for bt_prob in bt_probs]  # 1-bt_prob because we want label=1 when rejected is preferred
 
-                # Store results as before, but now for three columns
-                for idx, cs, rs, prob in zip(indices, chosen_scores, rejected_scores, bt_probs):
+                # Store results including the sampled labels
+                for idx, cs, rs, prob, label in zip(indices, chosen_scores, rejected_scores, bt_probs, bt_labels):
                     if idx not in result:
-                        result[idx] = {"chosen_score": [], "rejected_score": [], "bt_prob": []}
+                        result[idx] = {"chosen_score": [], "rejected_score": [], "bt_prob": [], "label": []}
                     result[idx]["chosen_score"].append(cs)
                     result[idx]["rejected_score"].append(rs)
                     result[idx]["bt_prob"].append(prob)
+                    result[idx]["label"].append(label)
 
             if accelerator.is_local_main_process:
                 # Update progress bar
@@ -292,15 +301,20 @@ def evaluate_reward(model, tokenizer, response_dataset, script_args):
         for d in gathered:
             for k, v in d.items():
                 if k not in results:
-                    results[k] = {"chosen_score": [], "rejected_score": [], "bt_prob": []}
+                    results[k] = {"chosen_score": [], "rejected_score": [], "bt_prob": [], "label": []}
                 results[k]["chosen_score"].extend(v["chosen_score"])
                 results[k]["rejected_score"].extend(v["rejected_score"])
                 results[k]["bt_prob"].extend(v["bt_prob"])
+                results[k]["label"].extend(v["label"])
 
         def get_column(col):
-            return [np.mean(results[idx][col]) if idx in results else None for idx in range(len(response_dataset))]
+            if col == "label":
+                # For labels, take the mode (most frequent value) instead of mean
+                return [int(np.round(np.mean(results[idx][col]))) if idx in results else None for idx in range(len(response_dataset))]
+            else:
+                return [np.mean(results[idx][col]) if idx in results else None for idx in range(len(response_dataset))]
 
-        for col in ["chosen_score", "rejected_score", "bt_prob"]:
+        for col in ["chosen_score", "rejected_score", "bt_prob", "label"]:
             if col in response_dataset.column_names:
                 response_dataset = response_dataset.remove_columns(col)
             response_dataset = response_dataset.add_column(col, get_column(col))
@@ -309,9 +323,12 @@ def evaluate_reward(model, tokenizer, response_dataset, script_args):
 
 
 def main():
-    print('Start EvalrewardBT.py!!')
+    print('Start Label BT (Bradley-Terry Labeling) script!!')
     parser = HfArgumentParser(ScriptArguments)
     script_args = parser.parse_args_into_dataclasses()[0]
+
+    # Set random seed for reproducible Bernoulli sampling
+    np.random.seed(script_args.seed)
 
     # Model & Tokenizer
     model, tokenizer = load_score_model(script_args)
@@ -320,7 +337,7 @@ def main():
     if script_args.process_all_splits:
         # Load the full DatasetDict (all splits)
         response_dataset_dict = load_dataset(
-            HUGGINGFACE_CONFIGS["prefix"]["evaluations"] + script_args.run_name,
+            script_args.dataset,
             name=script_args.tag,
             cache_dir=script_args.dataset_cache_dir,
         )
@@ -333,7 +350,7 @@ def main():
 
         # Save and push with all splits preserved
         DatasetDict(result_dict).push_to_hub(
-            HUGGINGFACE_CONFIGS["prefix"]["evaluations"] + script_args.run_name,
+            script_args.dataset + "-labeled",
             script_args.tag,
         )
     else:
@@ -347,11 +364,11 @@ def main():
         DatasetDict(
             {script_args.split: response_dataset},
         ).push_to_hub(
-            HUGGINGFACE_CONFIGS["prefix"]["evaluations"] + script_args.run_name,
+            script_args.dataset + "-labeled",
             script_args.tag,
         )
     
-    print('Finished EvalrewardBT.py')
+    print('Finished Label BT script - dataset labeled with Bradley-Terry probabilities')
 
 
 if __name__ == "__main__":

@@ -215,19 +215,19 @@ def gen(pipeline, model, dataset, tag, gres, extra_params):
         allow_extra_args=True,
     )
 )
-@click.option("-p", "--pipeline", required=True, help="Pipeline name.")
-@click.option("-m", "--model", required=True, help="Model name.")
+@click.option("-m", "--score_model_id", required=True, help="Model name.")
 @click.option("-d", "--dataset", required=True, help="Dataset name.")
 @click.option("-t", "--tag", required=True, help="Tag for the experiment.")
 @click.option("-g", "--gres", default=DEVICE_CONFIGS["local"], help="GPU resources.")
 @click.argument("extra_params", nargs=-1, type=click.UNPROCESSED)
-def label_bt(pipeline, model, dataset, tag, gres, extra_params):
+def label_bt(score_model_id, dataset, tag, gres, extra_params):
     """LABEL_BT: label dataset using Bradley-Terry probabilities with configurable reward model."""
-    extra_params = parse_extra_args("label_bt", extra_params)
     accelerate_kwargs = get_accelerate_params("GEN", gres)
     script_kwargs = {
         "dataset": dataset,
         "tag": tag,
+        "score_model_id": score_model_id,
+        "process_all_splits": True,
     }
     script_kwargs |= extra_params
     script_kwargs |= get_batch_size_params("EVALREWARD", gres)

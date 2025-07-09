@@ -99,7 +99,7 @@ class ScriptArguments:
 # Load dataset and remove unnecessary columns
 def load_generated_dataset(script_args):
     response_dataset = load_dataset(
-        script_args.dataset,
+        HUGGINGFACE_CONFIGS["prefix"]["evaluations"] + script_args.dataset,
         name=script_args.tag,
         cache_dir=script_args.dataset_cache_dir,
     )
@@ -205,6 +205,8 @@ def load_score_model(script_args):
 
 # Evaluate reward of responses
 def evaluate_reward(model, tokenizer, response_dataset, script_args):
+    model_name = script_args.score_model_id.split("/")[-1]
+
     generator, num_iters = sample_every_k_batched(
         response_dataset,
         script_args.every_k,
@@ -248,15 +250,12 @@ def evaluate_reward(model, tokenizer, response_dataset, script_args):
                 # Generic score extraction based on model type
                 if hasattr(model, '_model_type'):
                     if model._model_type == "score":
-                        # PKU-Alignment models with AutoModelForScore
                         chosen_scores = chosen_outputs.end_scores.cpu().flatten().tolist()
                         rejected_scores = rejected_outputs.end_scores.cpu().flatten().tolist()
                     elif model._model_type == "sequence_classification":
-                        # AutoModelForSequenceClassification models (e.g., OpenAssistant)
                         chosen_scores = chosen_outputs.logits.cpu().flatten().tolist()
                         rejected_scores = rejected_outputs.logits.cpu().flatten().tolist()
                     elif model._model_type in ["custom", "auto"]:
-                        # Generic AutoModel (e.g., openbmb and other custom models)
                         chosen_scores = chosen_outputs.cpu().flatten().tolist()
                         rejected_scores = rejected_outputs.cpu().flatten().tolist()
                     else:
@@ -276,19 +275,18 @@ def evaluate_reward(model, tokenizer, response_dataset, script_args):
                         raise RuntimeError(f"Unable to extract scores from model outputs. Output type: {type(chosen_outputs)}")
 
                 bt_probs = [float(torch.sigmoid(torch.tensor(cs - rs))) for cs, rs in zip(chosen_scores, rejected_scores)]
-                
-                # Sample labels from Bernoulli distribution based on BT probabilities
-                # If Bernoulli sample is 1, chosen is preferred (label=0), if 0, rejected is preferred (label=1)
-                bt_labels = [int(np.random.binomial(1, 1 - bt_prob)) for bt_prob in bt_probs]  # 1-bt_prob because we want label=1 when rejected is preferred
 
-                # Store results including the sampled labels
-                for idx, cs, rs, prob, label in zip(indices, chosen_scores, rejected_scores, bt_probs, bt_labels):
+                # Store results
+                for i, (idx, cs, rs, prob) in enumerate(zip(indices, chosen_scores, rejected_scores, bt_probs)):
                     if idx not in result:
-                        result[idx] = {"chosen_score": [], "rejected_score": [], "bt_prob": [], "label": []}
-                    result[idx]["chosen_score"].append(cs)
-                    result[idx]["rejected_score"].append(rs)
-                    result[idx]["bt_prob"].append(prob)
-                    result[idx]["label"].append(label)
+                        result[idx] = {
+                            f"chosen_score_{model_name}": [],
+                            f"rejected_score_{model_name}": [],
+                            f"bt_prob_{model_name}": []
+                        }
+                    result[idx][f"chosen_score_{model_name}"].append(cs)
+                    result[idx][f"rejected_score_{model_name}"].append(rs)
+                    result[idx][f"bt_prob_{model_name}"].append(prob)
 
             if accelerator.is_local_main_process:
                 # Update progress bar
@@ -301,20 +299,26 @@ def evaluate_reward(model, tokenizer, response_dataset, script_args):
         for d in gathered:
             for k, v in d.items():
                 if k not in results:
-                    results[k] = {"chosen_score": [], "rejected_score": [], "bt_prob": [], "label": []}
-                results[k]["chosen_score"].extend(v["chosen_score"])
-                results[k]["rejected_score"].extend(v["rejected_score"])
-                results[k]["bt_prob"].extend(v["bt_prob"])
-                results[k]["label"].extend(v["label"])
+                    results[k] = {
+                        f"chosen_score_{model_name}": [],
+                        f"rejected_score_{model_name}": [],
+                        f"bt_prob_{model_name}": []
+                    }
+                results[k][f"chosen_score_{model_name}"].extend(v[f"chosen_score_{model_name}"])
+                results[k][f"rejected_score_{model_name}"].extend(v[f"rejected_score_{model_name}"])
+                results[k][f"bt_prob_{model_name}"].extend(v[f"bt_prob_{model_name}"])
 
         def get_column(col):
-            if col == "label":
-                # For labels, take the mode (most frequent value) instead of mean
-                return [int(np.round(np.mean(results[idx][col]))) if idx in results else None for idx in range(len(response_dataset))]
-            else:
-                return [np.mean(results[idx][col]) if idx in results else None for idx in range(len(response_dataset))]
+            return [
+                np.mean(results[idx][col]) if idx in results else None
+                for idx in range(len(response_dataset))
+            ]
 
-        for col in ["chosen_score", "rejected_score", "bt_prob", "label"]:
+        for col in [
+            f"chosen_score_{model_name}",
+            f"rejected_score_{model_name}",
+            f"bt_prob_{model_name}"
+        ]:
             if col in response_dataset.column_names:
                 response_dataset = response_dataset.remove_columns(col)
             response_dataset = response_dataset.add_column(col, get_column(col))
@@ -334,10 +338,11 @@ def main():
     model, tokenizer = load_score_model(script_args)
     model.eval()
 
+
     if script_args.process_all_splits:
         # Load the full DatasetDict (all splits)
         response_dataset_dict = load_dataset(
-            script_args.dataset,
+            HUGGINGFACE_CONFIGS["prefix"]["evaluations"] + script_args.dataset,
             name=script_args.tag,
             cache_dir=script_args.dataset_cache_dir,
         )
@@ -350,7 +355,7 @@ def main():
 
         # Save and push with all splits preserved
         DatasetDict(result_dict).push_to_hub(
-            script_args.dataset + "-labeled",
+            HUGGINGFACE_CONFIGS["prefix"]["evaluations"] + script_args.dataset,
             script_args.tag,
         )
     else:
@@ -364,7 +369,7 @@ def main():
         DatasetDict(
             {script_args.split: response_dataset},
         ).push_to_hub(
-            script_args.dataset + "-labeled",
+            HUGGINGFACE_CONFIGS["prefix"]["evaluations"] + script_args.dataset,
             script_args.tag,
         )
     

@@ -215,6 +215,31 @@ def gen(pipeline, model, dataset, tag, gres, extra_params):
         allow_extra_args=True,
     )
 )
+@click.option("-m", "--score_model_id", required=True, help="Model name.")
+@click.option("-d", "--dataset", required=True, help="Dataset name.")
+@click.option("-t", "--tag", required=True, help="Tag for the experiment.")
+@click.option("-g", "--gres", default=DEVICE_CONFIGS["local"], help="GPU resources.")
+@click.argument("extra_params", nargs=-1, type=click.UNPROCESSED)
+def label_bt(score_model_id, dataset, tag, gres, extra_params):
+    """LABEL_BT: label dataset using Bradley-Terry probabilities with configurable reward model."""
+    accelerate_kwargs = get_accelerate_params("GEN", gres)
+    script_kwargs = {
+        "dataset": dataset,
+        "tag": tag,
+        "score_model_id": score_model_id,
+        "process_all_splits": True,
+    }
+    script_kwargs |= extra_params
+    script_kwargs |= get_batch_size_params("EVALREWARD", gres)
+    call("label_bt", accelerate_kwargs, **script_kwargs)
+
+
+@click.command(
+    context_settings=dict(
+        ignore_unknown_options=True,
+        allow_extra_args=True,
+    )
+)
 @click.option("-p", "--pipeline", required=True, help="Pipeline name.")
 @click.option("-m", "--model", required=True, help="Model name.")
 @click.option("-d", "--dataset", required=True, help="Dataset name.")
@@ -286,6 +311,7 @@ cli.add_command(sft)
 cli.add_command(dpo)
 cli.add_command(gen)
 cli.add_command(evalreward)
+cli.add_command(label_bt)
 cli.add_command(evalgpt)
 # Utility commands
 cli.add_command(clear)

@@ -28,6 +28,42 @@ Login into huuggingface - !huggingface-cli login
 ### Step 5: View Results
 1. Inside `./viewer` folder, run `streamlit run app.py` to start the result viewer. Using the UI there to analysis the results.
 
+### Step 6: Label Dataset with Bradley-Terry Probabilities
+You can label preference datasets and compute Bradley-Terry (BT) probabilities using the `label_bt.py` script:
+
+1. **Basic usage** - Label a specific dataset split:
+   ```bash
+   python pipelines/label_bt.py \
+     --dataset openbmb/UltraFeedback \
+     --tag your_tag \
+     --split train \
+     --score_model_id PKU-Alignment/beaver-7b-v1.0-reward
+   ```
+
+2. **Process all splits** in the dataset:
+   ```bash
+   python pipelines/label_bt.py \
+     --dataset openbmb/UltraFeedback \
+     --tag your_tag \
+     --process_all_splits \
+     --score_model_id PKU-Alignment/beaver-7b-v1.0-reward
+   ```
+
+3. **Expected dataset format**: The dataset should have columns named `prompt`, `chosen`, and `rejected`.
+
+4. **Output**: The script adds four columns to your dataset:
+   - `chosen_score`: Reward score for the chosen response
+   - `rejected_score`: Reward score for the rejected response  
+   - `bt_prob`: Bradley-Terry probability computed as sigmoid(chosen_score - rejected_score)
+   - `label`: Bernoulli sample from BT probability (0=chosen preferred, 1=rejected preferred)
+
+5. **The labeled dataset is saved with "-labeled" suffix**: The output dataset will be pushed to HuggingFace Hub with the original dataset name plus "-labeled" suffix.
+
+6. **Troubleshooting**:
+   - **ModuleNotFoundError: safe_rlhf**: Install the safe-rlhf library for PKU-Alignment models
+   - **AttributeError: huggingface**: Configure `configs/services/huggingface.yaml` with your HuggingFace token
+   - **Dataset not found**: Ensure your dataset is uploaded to HuggingFace Hub with the correct naming
+   - **CUDA/Memory errors**: Reduce `--per_device_evalreward_batch_size` or use a smaller model
 
 ### Training time and memory requirements.
 The approximate training time and memory requirements of each SAIL training on three models are: Qwen1.5-0.5B: 1-4 hours with 4*A40 GPUs; Phi-3-3.8B: 2-8 hours with 4*RTX6000Ada GPUs; Llama-3-8B: 2-12 hours with 4*A100 GPUs.
@@ -38,3 +74,5 @@ Batch size 1
 load best model is off
 Tasks.yaml has q0.5B model
 use flash attention is False in dpo.py, sft.py, generate.py (pipelines)
+
+# Updated README content

@@ -143,13 +143,19 @@ def prep(prefix):
 @click.option("-d", "--dataset", required=True, help="Dataset name.")
 @click.option("-t", "--tag", required=True, help="Tag for the experiment.")
 @click.option("-g", "--gres", default=DEVICE_CONFIGS["local"], help="GPU resources.")
-def sft(model, dataset, tag, gres):
+@click.option("--reward_model", default=None, help="Reward model name.")
+@click.option("--noise_type", default=None, help="Type of noise to apply (e.g., label_switching, bt_prob_noise).")
+@click.option("--noise_level", default=None, type=float, help="Level of noise to apply.")
+def sft(model, dataset, tag, gres, reward_model, noise_type, noise_level):
     """SFT: Supervised Fine-tuning."""
     accelerate_kwargs = get_accelerate_params("SFT", gres)
     script_kwargs = {
         "model": model,
         "dataset": dataset,
         "tag": tag,
+        "reward_model": reward_model,
+        "noise_type": noise_type,
+        "noise_level": noise_level,
     }
     script_kwargs |= get_optimizer_params("SFT", model, dataset)
     script_kwargs |= get_batch_size_params("SFT", gres)

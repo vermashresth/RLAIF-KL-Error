@@ -38,6 +38,12 @@ def format_run_name(pipeline, model, dataset, extra_params):
                 for param_name in required_params
             ]
         )
+    # this part is for the reward evaluator, noise type and noies level
+    if "reward_model" in extra_params and extra_params["reward_model"] is not None:
+        configs += "reward_model" + str(extra_params["reward_model"])
+    if "noise_type" in extra_params and extra_params["noise_type"] is not None:
+        configs += "noise_type" + str(extra_params["noise_type"]) + str(extra_params["noise_level"])
+
     return pipeline + "_" + model + "_" + dataset + ("_" if configs else "") + configs
 
 
@@ -103,7 +109,7 @@ def generate_sweep_tasks():
 # Initialize wandb
 def wandb_init(run_name, script_args, training_args):
     wandb.init(
-        mode="offline",
+        # mode="offline",
         project=WANDB_CONFIGS["project"],
         entity=WANDB_CONFIGS["team"],
         name=script_args.tag + "-" + run_name,

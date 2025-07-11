@@ -159,9 +159,12 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# Folders
+# Dev Folders
 cache
-wandb
+wandb/
+flash-attention/
+safe-rlhf/
+slurm/
 
 
 *.yaml
@@ -170,3 +173,4 @@ hostname.slurm
 gpu.slurm
 myerrors.err
 myoutput.out
+

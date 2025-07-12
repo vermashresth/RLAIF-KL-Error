@@ -28,23 +28,36 @@ def format_args(value):
 def format_run_name(pipeline, model, dataset, extra_params):
     if pipeline == "SFT":
         configs = ""
+        # this part is for the reward evaluator, noise type and noies level
+        if "reward_model" in extra_params and extra_params["reward_model"] is not None:
+            configs += "reward_model" + str(extra_params["reward_model"])
+        if "noise_type" in extra_params and extra_params["noise_type"] is not None:
+            configs +=  "noise_type" + str(extra_params["noise_type"]) + str(extra_params["noise_level"])
+
     else:
         if pipeline not in PARAMS_CONFIGS:
             raise ValueError(f"Unknown pipeline name: {pipeline}")
         required_params = PARAMS_CONFIGS[pipeline]
         configs = "".join(
             [
-                param_name + str(extra_params[param_name])
+                (param_name if param_name != "loss_type" else "") + str(extra_params[param_name])
                 for param_name in required_params
             ]
         )
-    # this part is for the reward evaluator, noise type and noies level
-    if "reward_model" in extra_params and extra_params["reward_model"] is not None:
-        configs += "reward_model" + str(extra_params["reward_model"])
-    if "noise_type" in extra_params and extra_params["noise_type"] is not None:
-        configs += "noise_type" + str(extra_params["noise_type"]) + str(extra_params["noise_level"])
+        # this part is for the reward evaluator, noise type and noies level
+        if "reward_model" in extra_params and extra_params["reward_model"] is not None:
+            configs += str(extra_params["reward_model"])
+        if "noise_type" in extra_params and extra_params["noise_type"] is not None:
+            configs +=  str(extra_params["noise_type"]) + str(extra_params["noise_level"])
 
-    return pipeline + "_" + model + "_" + dataset + ("_" if configs else "") + configs
+    run_name = pipeline + "_" + model + "_" + dataset + ("_" if configs else "") + configs
+
+    if len(run_name) > 96:
+        raise ValueError(
+            f"Run name '{run_name}' exceeds 96 characters. This will create a problem with HuggingFace. Please shorten the name."
+        )
+    
+    return run_name
 
 
 # Generate sweep tasks

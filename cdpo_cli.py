@@ -144,7 +144,7 @@ def prep(prefix):
 @click.option("-t", "--tag", required=True, help="Tag for the experiment.")
 @click.option("-g", "--gres", default=DEVICE_CONFIGS["local"], help="GPU resources.")
 @click.option("--reward_model", default=None, help="Reward model name.")
-@click.option("--noise_type", default=None, help="Type of noise to apply (e.g., label_switching, bt_prob_noise).")
+@click.option("--noise_type", default=None, help="Type of noise to apply (e.g., label_switching, bt_noise_gauss).")
 @click.option("--noise_level", default=None, type=float, help="Level of noise to apply.")
 def sft(model, dataset, tag, gres, reward_model, noise_type, noise_level):
     """SFT: Supervised Fine-tuning."""

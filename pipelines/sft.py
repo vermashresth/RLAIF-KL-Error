@@ -25,6 +25,7 @@ from scipy.special import expit, logit
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils import CONFIGS, format_run_name, wandb_init
+from utils.utils import load_and_format_dataset, sanitize_model_name
 from cdpo import SFTTrainer
 
 HUGGINGFACE_CONFIGS = CONFIGS.services.huggingface
@@ -70,7 +71,7 @@ class ScriptArguments:
         default=None, metadata={"help": "reward model name for resampling labels"}
     )
     noise_type: Optional[str] = field(
-        default=None, metadata={"help": "type of noise to apply (e.g., label_switching, bt_prob_noise)"}
+        default=None, metadata={"help": "type of noise to apply (e.g., label_switching, bt_prob_gauss)"}
     )
     noise_level: Optional[float] = field(
         default=None, metadata={"help": "level of noise to apply"}
@@ -128,71 +129,6 @@ class TrainingArguments(transformers.TrainingArguments):
         default=None,
         metadata={"help": "output dir, do not specify manually"},
     )
-
-
-# Helper function to handle noise injection and label resampling
-def apply_noise_and_resampling(dataset, script_args):
-    # Ensure bt_prob is directly assigned from bt_prob_{reward_model} if reward_model is provided
-    if hasattr(script_args, 'reward_model') and script_args.reward_model:
-        sanitized_reward_model = sanitize_model_name(script_args.reward_model)
-        model_column = f"bt_prob_{sanitized_reward_model}"
-        if model_column in dataset.column_names['train'] and model_column in dataset.column_names['eval']:
-            dataset = dataset.rename_column(model_column, "bt_prob")
-        else:
-            raise ValueError(f"Column '{model_column}' does not exist in the dataset.")
-
-    # Apply noise to bt_prob before resampling
-    if script_args.noise_type == "bt_prob_noise" and script_args.noise_level > 0:
-        def apply_bt_prob_noise(example):
-            noise = np.random.normal(0, script_args.noise_level)
-            example["bt_prob"] = float(expit(logit(example["bt_prob"]) + noise))
-            return example
-
-        dataset["train"] = dataset["train"].map(apply_bt_prob_noise, num_proc=4)
-
-    # Resample labels using bt_prob
-    def resample_labels(example):
-        prob = example["bt_prob"]
-        label = np.random.choice(["y1", "y2"], p=[prob, 1 - prob])
-        example["label"] = label
-        return example
-
-    dataset["train"] = dataset["train"].map(resample_labels, num_proc=4)
-    dataset["eval"] = dataset["eval"].map(resample_labels, num_proc=4)
-
-    # Apply label flipping noise after resampling
-    if script_args.noise_type == "label_switching" and script_args.noise_level > 0:
-        def apply_label_switching_noise(example):
-            if np.random.random() < script_args.noise_level:
-                example["label"] = "y2" if example["label"] == "y1" else "y1"
-            return example
-
-        dataset["train"] = dataset["train"].map(apply_label_switching_noise, num_proc=4)
-
-    return dataset
-
-
-# Load processed RLHF dataset and convert to SFT format, using the preferred answer as target
-def load_and_format_dataset(script_args):
-    dataset = load_dataset(
-        HUGGINGFACE_CONFIGS["prefix"]["datasets"] + script_args.dataset,
-        # cache_dir=script_args.dataset_cache_dir,
-    )
-
-    # Apply noise and resampling logic
-    dataset = apply_noise_and_resampling(dataset, script_args)
-
-    # Dynamically select 'chosen' or 'rejected' based on the label
-    def format_func(sample):
-        if sample["label"] == "y1":
-            return {"text": sample["prompt"] + sample["chosen"]}
-        else:
-            return {"text": sample["prompt"] + sample["rejected"]}
-
-    train_dataset = dataset["train"].map(format_func, num_proc=4)
-    eval_dataset = dataset["eval"].map(format_func, num_proc=4)
-
-    return train_dataset, eval_dataset
 
 
 # Load model and tokenizer and configure ZeRO, LoRA for training
@@ -289,32 +225,7 @@ def train(model, tokenizer, train_dataset, eval_dataset, script_args, training_a
     return trainer
 
 
-def sanitize_model_name(model_id: Optional[str]) -> Optional[str]:
-    """Convert model ID to a safe column name suffix"""
-    if model_id is None:
-        return None
-    model_name = model_id.split("/")[-1]
-    # Replace problematic characters with underscores
-    model_name = model_name.replace("-", "_").replace(".", "_")
-    # Truncate if too long
-    if len(model_name) > 20:
-        model_name = model_name[:20]
-    return model_name
-
-
-def main():
-    parser = HfArgumentParser(
-        (
-            ScriptArguments,
-            TrainingArguments,
-        )
-    )
-    (
-        script_args,
-        training_args,
-    ) = parser.parse_args_into_dataclasses()
-    training_args.gradient_checkpointing_kwargs = dict(use_reentrant=False)
-
+def main(script_args: ScriptArguments, training_args: TrainingArguments):
     # Adjust configs
     run_name = format_run_name(
         pipeline="SFT",
@@ -326,6 +237,7 @@ def main():
             "noise_level": script_args.noise_level,
         },
     )
+    training_args.gradient_checkpointing_kwargs = dict(use_reentrant=False)
     training_args.hub_model_id = HUGGINGFACE_CONFIGS["prefix"]["models"] + run_name
     training_args.output_dir = os.path.join(
         CACHE_CONFIGS["checkpoint_cache_dir"], run_name + "_" + HASHCODE
@@ -335,7 +247,7 @@ def main():
     model, tokenizer = load_and_config_model(script_args, training_args)
 
     # Dataset
-    train_dataset, eval_dataset = load_and_format_dataset(script_args)
+    train_dataset, eval_dataset = load_and_format_dataset(script_args, format_type="sft")
 
     # WandB setup
     if accelerator.is_local_main_process:
@@ -349,12 +261,12 @@ def main():
     if accelerator.is_local_main_process:
         # Push to Hub
         trainer.push_to_hub(revision=script_args.tag)
-        add_collection_item(
-            collection_slug=HUGGINGFACE_CONFIGS["collections"]["models"],
-            item_id=training_args.hub_model_id,
-            item_type="model",
-            exists_ok=True,
-        )
+        # add_collection_item(
+        #     collection_slug=HUGGINGFACE_CONFIGS["collections"]["models"],
+        #     item_id=training_args.hub_model_id,
+        #     item_type="model",
+        #     exists_ok=True,
+        # )
         # Remove checkpoint cache
         shutil.rmtree(
             os.path.join(
@@ -364,4 +276,14 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = HfArgumentParser(
+        (
+            ScriptArguments,
+            TrainingArguments,
+        )
+    )
+    (
+        script_args,
+        training_args,
+    ) = parser.parse_args_into_dataclasses()
+    main(script_args, training_args)

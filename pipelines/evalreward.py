@@ -183,12 +183,12 @@ def evaluate_reward(model, tokenizer, response_dataset, script_args):
 
     # Add or replace the 'reward_score' column in the dataset
     response_dataset = (
-        response_dataset.remove_columns("reward_score")
-        if "reward_score" in response_dataset.column_names
+        response_dataset.remove_columns("reward_score_generated")
+        if "reward_score_generated" in response_dataset.column_names
         else response_dataset
     )
     response_dataset = response_dataset.add_column(
-        "reward_score",
+        "reward_score_generated",
         [
             np.mean(results[idx]) if idx in results else None
             for idx in range(len(response_dataset))

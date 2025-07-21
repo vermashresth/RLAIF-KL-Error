@@ -18,27 +18,11 @@ DEVICE_CONFIGS = CONFIGS.devices.devices
 OPTIM_CONFIGS = CONFIGS.pipelines.optim
 
 
-def get_optimizer_params(pipeline, model, dataset):
-    """Get optimizer parameters from config with model/dataset-specific multipliers."""
-    # Get the default values for the pipeline
-    defaults = OPTIM_CONFIGS["defaults"]["DPO" if pipeline != "SFT" else "SFT"]
-    num_train_epochs = int(defaults["num_train_epochs"])
-    learning_rate = float(defaults["learning_rate"])
-
-    # Apply multipliers based on the dataset and model
-    if dataset in OPTIM_CONFIGS["multipliers"]["num_train_epochs"]:
-        num_train_epochs *= OPTIM_CONFIGS["multipliers"]["num_train_epochs"][dataset]
-
-    if model in OPTIM_CONFIGS["multipliers"]["learning_rate"]:
-        learning_rate *= OPTIM_CONFIGS["multipliers"]["learning_rate"][model]
-
-    return {"num_train_epochs": int(num_train_epochs), "learning_rate": learning_rate}
-
-
 def get_batch_size_params(pipeline, gres):
     """Get batch size parameters based on GPU device configuration."""
     device_type = gres.split(":")[0] if ":" in gres else gres
     return DEVICE_CONFIGS["pipelines"][pipeline][device_type]
+
 
 def create_arguments(process, args):
     """Create arguments for any process from execute arguments."""
@@ -69,22 +53,22 @@ def create_arguments(process, args):
         )
         
         training_args = TrainingArgumentsSFT(
-            num_train_epochs=optimizer_params["num_train_epochs"],
-            learning_rate=optimizer_params["learning_rate"],
+            num_train_epochs=args.num_sft_train_epochs,
+            learning_rate=args.sft_learning_rate,
             per_device_train_batch_size=batch_params["per_device_train_batch_size"],
             per_device_eval_batch_size=batch_params["per_device_eval_batch_size"],
             save_strategy="epoch",
             logging_strategy="steps",
             logging_steps=10,
             bf16=True,
-            remove_unused_columns=False
+            remove_unused_columns=False,
+            model_max_length=args.model_max_length,
         )
         
         return script_args, training_args
     
     elif process == "dpo":
         # Get config parameters like cdpo_cli does
-        optimizer_params = get_optimizer_params(args.pipeline, args.model, args.dataset)
         batch_params = get_batch_size_params("DPO", args.gres)
         
         script_args = ScriptArgumentsDPO(
@@ -103,8 +87,8 @@ def create_arguments(process, args):
         )
         
         training_args = TrainingArgumentsDPO(
-            num_train_epochs=optimizer_params["num_train_epochs"],
-            learning_rate=optimizer_params["learning_rate"],
+            num_train_epochs=args.num_dpo_train_epochs,
+            learning_rate=args.dpo_learning_rate,
             per_device_train_batch_size=batch_params["per_device_train_batch_size"],
             per_device_eval_batch_size=batch_params["per_device_eval_batch_size"],
             gradient_accumulation_steps=batch_params["gradient_accumulation_steps"],
@@ -112,7 +96,8 @@ def create_arguments(process, args):
             logging_strategy="steps",
             logging_steps=10,
             bf16=True,
-            remove_unused_columns=False
+            remove_unused_columns=False,
+            model_max_length=args.model_max_length,
         )
         
         return script_args, training_args
@@ -249,7 +234,11 @@ if __name__ == "__main__":
     parser.add_argument("--lora_alpha", type=int, default=16, help="LoRA alpha value (default: 16)")
     parser.add_argument("--loss_type", help="Loss type (e.g., generalized_sigmoid)")
     parser.add_argument("--model_max_length", type=int, default=1024, help="Maximum sequence length for the model (default: 1024)")
-    
+    parser.add_argument("--num_sft_train_epochs", type=int, default=5, help="Number of SFT training epochs (default: 1)")
+    parser.add_argument("--num_dpo_train_epochs", type=int, default=5, help="Number of DPO training epochs (default: 1)")
+    parser.add_argument("--sft_learning_rate", type=float, default=2e-5, help="Learning rate for training (default: 2e-5)")
+    parser.add_argument("--dpo_learning_rate", type=float, default=1e-5, help="Learning rate for DPO training (default: 1e-5)")
+        
     # GPU resource specification (required for config-driven parameters)
     parser.add_argument("-g", "--gres", required=True, help="GPU resources (e.g., A100:1, A100) for automatic parameter configuration")
     

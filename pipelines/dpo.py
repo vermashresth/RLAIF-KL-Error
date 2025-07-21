@@ -32,6 +32,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Generalized DPO training script
 from cdpo import GeneralizedDPOTrainer
 from utils import CONFIGS, format_run_name, wandb_init
+from utils.utils import load_and_format_dataset, sanitize_model_name
 
 
 HUGGINGFACE_CONFIGS = CONFIGS.services.huggingface
@@ -114,7 +115,7 @@ class ScriptArguments:
         metadata={"help": "loss type used for training"},
     )
     noise_type: str = field(
-        default=None, metadata={"help": "Type of noise to inject (e.g., bt_prob_noise)"}
+        default=None, metadata={"help": "Type of noise to inject (e.g., bt_prob_gauss)"}
     )
     noise_level: float = field(
         default=0.0, metadata={"help": "Level of noise to inject"}
@@ -169,91 +170,6 @@ class TrainingArguments(transformers.TrainingArguments):
     output_dir: Optional[str] = field(
         default="none", metadata={"help": "run name for wandb"}
     )
-
-def sanitize_model_name(model_id: Optional[str]) -> Optional[str]:
-    """Convert model ID to a safe column name suffix"""
-    if model_id is None:
-        return None
-    model_name = model_id.split("/")[-1]
-    # Replace problematic characters with underscores
-    model_name = model_name.replace("-", "_").replace(".", "_")
-    # Truncate if too long
-    if len(model_name) > 20:
-        model_name = model_name[:20]
-    return model_name
-
-# Update the logic to inject noise only in the training dataset and resample (flip) in both
-
-def format_dataset_with_resample_and_noise(dataset, noise_type, noise_level, reward_model, is_training):
-    """
-    Apply noise injection (only for training), label flipping noise (only for training),
-    and flip chosen/rejected fields based on bt_prob consistently.
-    """
-    if reward_model:
-        sanitized_name = sanitize_model_name(reward_model)
-        bt_prob_column = f"bt_prob_{sanitized_name}"
-        if bt_prob_column not in dataset.column_names:
-            raise ValueError(f"Missing column: {bt_prob_column}")
-        dataset = dataset.rename_column(bt_prob_column, "bt_prob")
-
-    # Apply noise injection only for training dataset
-    def inject_bt_prob_noise(example):
-        if is_training and noise_type == "bt_prob_noise" and noise_level > 0:
-            # Apply noise to bt_prob
-            example["bt_prob"] = float(expit(logit(example["bt_prob"]) + noise_level * np.random.randn()))
-        return example
-
-    if is_training and noise_type == "bt_prob_noise":
-        dataset = dataset.map(inject_bt_prob_noise, desc="Applying noise to bt_prob")
-
-    # Resample labels using bt_prob
-    def resample_labels(example):
-        prob = example["bt_prob"]
-        label = np.random.choice(["y1", "y2"], p=[prob, 1 - prob])
-        if label == "y2":
-            example["chosen"], example["rejected"] = example["rejected"], example["chosen"]
-            example["bt_prob"] = 1 - prob  # Flip bt_prob to match the new label
-        return example
-
-    dataset = dataset.map(resample_labels, desc="Sampling from bt_prob to flip chosen and rejected fields")
-
-    # Apply label flipping noise directly to chosen and rejected fields during training
-    if is_training and noise_type == "label_switching" and noise_level > 0:
-        def apply_label_switching_noise(example):
-            if np.random.random() < noise_level:
-                # Flip the chosen and rejected fields
-                example["chosen"], example["rejected"] = example["rejected"], example["chosen"]
-                # Also flip the bt_prob to maintain consistency
-                example["bt_prob"] = 1 - example["bt_prob"]
-            return example
-
-        dataset = dataset.map(apply_label_switching_noise, num_proc=4, desc="Applying label switching noise")
-
-    return dataset
-
-
-# Update the load_and_format_dataset function to include noise and reward model handling
-def load_and_format_dataset(script_args):
-    dataset = load_dataset(
-        HUGGINGFACE_CONFIGS["prefix"]["datasets"] + script_args.dataset,
-        cache_dir=script_args.dataset_cache_dir,
-    )
-    train_dataset = dataset["train"]
-    eval_dataset = dataset["eval"]
-
-    # Apply formatting with noise and reward model
-    train_dataset = format_dataset_with_resample_and_noise(
-        train_dataset, script_args.noise_type, script_args.noise_level, script_args.reward_model, is_training=True
-    )
-    eval_dataset = format_dataset_with_resample_and_noise(
-        eval_dataset, script_args.noise_type, script_args.noise_level, script_args.reward_model, is_training=False
-    )
-
-    print(f"Training dataset size (formatted): {len(train_dataset)}")
-    print(f"Evaluation dataset size (formatted): {len(eval_dataset)}")
-
-    return train_dataset, eval_dataset
-
 
 # Load model and tokenizer and configure ZeRO, LoRA for training
 def load_and_config_model(script_args, training_args):
@@ -509,18 +425,7 @@ def train(model, tokenizer, train_dataset, eval_dataset, script_args, training_a
     return trainer
 
 
-def main():
-    parser = HfArgumentParser(
-        (
-            ScriptArguments,
-            TrainingArguments,
-        )
-    )
-    (
-        script_args,
-        training_args,
-    ) = parser.parse_args_into_dataclasses()
-    training_args.gradient_checkpointing_kwargs = dict(use_reentrant=False)
+def main(script_args: ScriptArguments, training_args: TrainingArguments):
 
     # Adjust configs
     run = format_run_name(
@@ -553,7 +458,7 @@ def main():
     model, tokenizer = load_and_config_model(script_args, training_args)
 
     # Dataset
-    train_dataset, eval_dataset = load_and_format_dataset(script_args)
+    train_dataset, eval_dataset = load_and_format_dataset(script_args, format_type="dpo")
 
     # WandB setup
     if accelerator.is_local_main_process:
@@ -567,27 +472,28 @@ def main():
     if accelerator.is_local_main_process:
         # Push to Hub
         trainer.push_to_hub(revision=script_args.tag)
-        add_collection_item(
-            collection_slug=HUGGINGFACE_CONFIGS["collections"]["models"],
-            item_id=training_args.hub_model_id,
-            item_type="model",
-            exists_ok=True,
-        )
+        # add_collection_item (
+        #     collection_slug=HUGGINGFACE_CONFIGS["collections"]["models"],
+        #     item_id=training_args.hub_model_id,
+        #     item_type="model",
+        #     exists_ok=True,
+        # )
         # Remove checkpoint cache
         shutil.rmtree(
             os.path.join(CACHE_CONFIGS["checkpoint_cache_dir"], run + "_" + HASHCODE)
         )
     print('Completed main for dpo.py')
 
-def sanitize_model_name(model_id):
-    """Convert model ID to a safe column name suffix"""
-    model_name = model_id.split("/")[-1]
-    # Replace problematic characters with underscores
-    model_name = model_name.replace("-", "_").replace(".", "_")
-    # Truncate if too long
-    if len(model_name) > 20:
-        model_name = model_name[:20]
-    return model_name
-
 if __name__ == "__main__":
-    main()
+    parser = HfArgumentParser(
+        (
+            ScriptArguments,
+            TrainingArguments,
+        )
+    )
+    (
+        script_args,
+        training_args,
+    ) = parser.parse_args_into_dataclasses()
+    training_args.gradient_checkpointing_kwargs = dict(use_reentrant=False)
+    main(script_args, training_args)

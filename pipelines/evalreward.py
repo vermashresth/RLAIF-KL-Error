@@ -113,7 +113,7 @@ def load_score_model(script_args):
         model = AutoModel.from_pretrained(
             script_args.score_model_id,
             torch_dtype=torch.bfloat16,
-            device_map={"": accelerator.local_process_index},
+            device_map={"": Accelerator().local_process_index},
             # This is needed as EurusRewardModel is not in transformers' model registry
             trust_remote_code=True,
             use_cache=True,
@@ -197,10 +197,8 @@ def evaluate_reward(model, tokenizer, response_dataset, script_args):
     return response_dataset
 
 
-def main():
+def main(script_args: ScriptArguments):
     print('Start Evalreward.py!!')
-    parser = HfArgumentParser(ScriptArguments)
-    script_args = parser.parse_args_into_dataclasses()[0]
 
     # Find the reward model by dataset type
     for dataset_prefix in REWARD_CONFIGS.keys():
@@ -230,4 +228,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = HfArgumentParser(ScriptArguments)
+    script_args = parser.parse_args_into_dataclasses()[0]
+    main(script_args)

@@ -37,7 +37,6 @@ def create_arguments(process, args):
 
     if process == "sft":
         # Get config parameters like cdpo_cli does
-        optimizer_params = get_optimizer_params("SFT", args.model, args.dataset)
         batch_params = get_batch_size_params("SFT", args.gres)
         
         script_args = ScriptArgumentsSFT(

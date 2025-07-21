@@ -45,7 +45,7 @@ class ScriptArguments:
         metadata={"help": "Dataset tag to evaluate"}
     )
     reward_column_chosen: str = field(
-        default="reward_score",
+        default="reward_score_chosen",
         metadata={"help": "Column name for chosen response rewards"}
     )
     reward_column_response: str = field(

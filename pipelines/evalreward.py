@@ -133,7 +133,14 @@ def load_score_model(script_args):
 
 
 # Evaluate reward of responses
-def evaluate_reward(model, tokenizer, response_dataset, script_args):
+def evaluate_reward(model, tokenizer, response_dataset, script_args, response_column):
+    if response_column == "response":
+        new_column_name = "reward_score_generated"
+    elif response_column == "chosen":
+        new_column_name = "reward_score_chosen"
+    else:
+        raise ValueError(f"Unknown response column: {response_column}")
+
     generator, num_iters = sample_every_k_batched(
         response_dataset,
         script_args.every_k,
@@ -150,7 +157,7 @@ def evaluate_reward(model, tokenizer, response_dataset, script_args):
         for indices, samples in process_indices_and_samples:
             with torch.no_grad():
                 inputs = tokenizer(
-                    [sample["prompt"] + sample["response"] for sample in samples],
+                    [sample["prompt"] + sample[response_column] for sample in samples],
                     max_length=script_args.model_max_length,
                     truncation=script_args.truncation,
                     padding=script_args.padding,
@@ -183,12 +190,12 @@ def evaluate_reward(model, tokenizer, response_dataset, script_args):
 
     # Add or replace the 'reward_score' column in the dataset
     response_dataset = (
-        response_dataset.remove_columns("reward_score_generated")
-        if "reward_score_generated" in response_dataset.column_names
+        response_dataset.remove_columns(new_column_name)
+        if new_column_name in response_dataset.column_names
         else response_dataset
     )
     response_dataset = response_dataset.add_column(
-        "reward_score_generated",
+        new_column_name,
         [
             np.mean(results[idx]) if idx in results else None
             for idx in range(len(response_dataset))
@@ -215,7 +222,8 @@ def main(script_args: ScriptArguments):
     response_dataset = load_generated_dataset(script_args)
 
     # Evaluation
-    response_dataset = evaluate_reward(model, tokenizer, response_dataset, script_args)
+    response_dataset = evaluate_reward(model, tokenizer, response_dataset, script_args, "response")
+    response_dataset = evaluate_reward(model, tokenizer, response_dataset, script_args, "chosen")
 
     # Push to Hub
     DatasetDict(

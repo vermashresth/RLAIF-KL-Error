@@ -136,7 +136,6 @@ def create_arguments(process, args):
         
         script_args = ScriptArgumentsEvalReward(
             run_name=run_name,
-            pipeline=args.pipeline,
             tag=args.tag,
             per_device_evalreward_batch_size=batch_params["per_device_evalreward_batch_size"],
         )

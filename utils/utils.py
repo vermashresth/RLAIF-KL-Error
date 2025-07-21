@@ -263,15 +263,16 @@ def apply_noise_and_resampling(dataset, script_args, is_training=True):
     return dataset
 
 
-def load_and_format_dataset(script_args, format_type):
+def load_and_format_dataset(script_args, format_type, resample=True):
     """Load processed RLHF dataset and format for SFT or DPO training"""
     dataset = load_dataset(
         HUGGINGFACE_CONFIGS["prefix"]["datasets"] + script_args.dataset,
         cache_dir=getattr(script_args, 'dataset_cache_dir', None),
     )
 
-    train_dataset = apply_noise_and_resampling(dataset["train"], script_args, is_training=True)
-    eval_dataset = apply_noise_and_resampling(dataset["eval"], script_args, is_training=False)
+    if resample:
+        train_dataset = apply_noise_and_resampling(dataset["train"], script_args, is_training=True)
+        eval_dataset = apply_noise_and_resampling(dataset["eval"], script_args, is_training=False)
 
     if format_type == "sft":
         def format_func(sample):
@@ -321,10 +322,10 @@ def get_process_output_resource(process, script_args):
         }
     
     elif process in ["generate", "evalreward"]:
-        
+        run = script_args.run if hasattr(script_args, 'run') else script_args.run_name
         return {
             "type": "dataset",
-            "id": HUGGINGFACE_CONFIGS["prefix"]["evaluations"] + script_args.run
+            "id": HUGGINGFACE_CONFIGS["prefix"]["evaluations"] + run
         }
     
     else:
@@ -342,12 +343,16 @@ def check_resource_exists(process, script_args, tag):
             if resource_info["type"] == "model":
                 api.model_info(resource_info["id"], revision=tag)
             elif resource_info["type"] == "dataset":
-                api.dataset_info(resource_info["id"], revision=tag)
+                api.dataset_info(resource_info["id"])
             
             return True
         except:
             return False
     else:
-        return False
+        # download dataset and check column exists
+        dataset = load_dataset(
+            HUGGINGFACE_CONFIGS["prefix"]["datasets"] + script_args.run_name,
+            cache_dir=getattr(script_args, 'dataset_cache_dir', None),
+        )
 
-
+        return ("reward_score_generated" in dataset.column_names)

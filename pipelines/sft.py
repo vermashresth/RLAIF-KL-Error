@@ -20,9 +20,12 @@ from transformers import (
 from accelerate import Accelerator
 from transformers.integrations import deepspeed
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+import numpy as np
+from scipy.special import expit, logit
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils import CONFIGS, format_run_name, wandb_init
+from utils.utils import load_and_format_dataset, sanitize_model_name
 from cdpo import SFTTrainer
 
 HUGGINGFACE_CONFIGS = CONFIGS.services.huggingface
@@ -63,6 +66,15 @@ class ScriptArguments:
     dataset_cache_dir: str = field(
         default=CACHE_CONFIGS["dataset_cache_dir"],
         metadata={"help": "dataset cache directory"},
+    )
+    reward_model: Optional[str] = field(
+        default=None, metadata={"help": "reward model name for resampling labels"}
+    )
+    noise_type: Optional[str] = field(
+        default=None, metadata={"help": "type of noise to apply (e.g., label_switching, bt_prob_gauss)"}
+    )
+    noise_level: Optional[float] = field(
+        default=None, metadata={"help": "level of noise to apply"}
     )
 
 
@@ -117,18 +129,6 @@ class TrainingArguments(transformers.TrainingArguments):
         default=None,
         metadata={"help": "output dir, do not specify manually"},
     )
-
-
-# Load processed RLHF dataset and convert to SFT format, using the preferred answer as target
-def load_and_format_dataset(script_args):
-    dataset = load_dataset(
-        HUGGINGFACE_CONFIGS["prefix"]["datasets"] + script_args.dataset,
-        cache_dir=script_args.dataset_cache_dir,
-    )
-    format_func = lambda sample: {"text": sample["prompt"] + sample["chosen"]}
-    train_dataset = dataset["train"].map(format_func, num_proc=4)
-    eval_dataset = dataset["eval"].map(format_func, num_proc=4)
-    return train_dataset, eval_dataset
 
 
 # Load model and tokenizer and configure ZeRO, LoRA for training
@@ -225,26 +225,19 @@ def train(model, tokenizer, train_dataset, eval_dataset, script_args, training_a
     return trainer
 
 
-def main():
-    parser = HfArgumentParser(
-        (
-            ScriptArguments,
-            TrainingArguments,
-        )
-    )
-    (
-        script_args,
-        training_args,
-    ) = parser.parse_args_into_dataclasses()
-    training_args.gradient_checkpointing_kwargs = dict(use_reentrant=False)
-
+def main(script_args: ScriptArguments, training_args: TrainingArguments):
     # Adjust configs
     run_name = format_run_name(
         pipeline="SFT",
         model=script_args.model,
         dataset=script_args.dataset,
-        extra_params={},
+        extra_params={
+            "reward_model": sanitize_model_name(script_args.reward_model),
+            "noise_type": script_args.noise_type,
+            "noise_level": script_args.noise_level,
+        },
     )
+    training_args.gradient_checkpointing_kwargs = dict(use_reentrant=False)
     training_args.hub_model_id = HUGGINGFACE_CONFIGS["prefix"]["models"] + run_name
     training_args.output_dir = os.path.join(
         CACHE_CONFIGS["checkpoint_cache_dir"], run_name + "_" + HASHCODE
@@ -254,7 +247,7 @@ def main():
     model, tokenizer = load_and_config_model(script_args, training_args)
 
     # Dataset
-    train_dataset, eval_dataset = load_and_format_dataset(script_args)
+    train_dataset, eval_dataset = load_and_format_dataset(script_args, format_type="sft")
 
     # WandB setup
     if accelerator.is_local_main_process:
@@ -268,12 +261,12 @@ def main():
     if accelerator.is_local_main_process:
         # Push to Hub
         trainer.push_to_hub(revision=script_args.tag)
-        add_collection_item(
-            collection_slug=HUGGINGFACE_CONFIGS["collections"]["models"],
-            item_id=training_args.hub_model_id,
-            item_type="model",
-            exists_ok=True,
-        )
+        # add_collection_item(
+        #     collection_slug=HUGGINGFACE_CONFIGS["collections"]["models"],
+        #     item_id=training_args.hub_model_id,
+        #     item_type="model",
+        #     exists_ok=True,
+        # )
         # Remove checkpoint cache
         shutil.rmtree(
             os.path.join(
@@ -283,4 +276,14 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = HfArgumentParser(
+        (
+            ScriptArguments,
+            TrainingArguments,
+        )
+    )
+    (
+        script_args,
+        training_args,
+    ) = parser.parse_args_into_dataclasses()
+    main(script_args, training_args)

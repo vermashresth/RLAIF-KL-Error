@@ -126,7 +126,7 @@ def load_and_config_model(script_args):
     base_model = AutoModelForCausalLM.from_pretrained(
         model_name,
         torch_dtype=compute_dtype,
-        device_map={"": accelerator.local_process_index},
+        device_map = {"": Accelerator().local_process_index},
         # Update transformers package to >=4.38.0 and no need to use trust_remote_code
         trust_remote_code=True,
         # Use flash attention if specified
@@ -210,10 +210,8 @@ def generate_responses(model, tokenizer, eval_dataset, script_args):
     return gathered
 
 
-def main():
+def main(script_args: ScriptArguments):
     print('Start Generate.py!!')
-    parser = HfArgumentParser(ScriptArguments)
-    (script_args,) = parser.parse_args_into_dataclasses()
 
     # Model & Tokenizer
     model, tokenizer = load_and_config_model(script_args)
@@ -239,14 +237,17 @@ def main():
             HUGGINGFACE_CONFIGS["prefix"]["evaluations"] + script_args.run,
             script_args.tag,
         )
-        add_collection_item(
-            collection_slug=HUGGINGFACE_CONFIGS["collections"]["evaluations"],
-            item_id=HUGGINGFACE_CONFIGS["prefix"]["evaluations"] + script_args.run,
-            item_type="dataset",
-            exists_ok=True,
-        )
+        # add_collection_item(
+        #     collection_slug=HUGGINGFACE_CONFIGS["collections"]["evaluations"],
+        #     item_id=HUGGINGFACE_CONFIGS["prefix"]["evaluations"] + script_args.run,
+        #     item_type="dataset",
+        #     exists_ok=True,
+        # )
     print('Finished Generate.py')
 
 
 if __name__ == "__main__":
-    main()
+    parser = HfArgumentParser(ScriptArguments)
+    (script_args,) = parser.parse_args_into_dataclasses()
+
+    main(script_args)

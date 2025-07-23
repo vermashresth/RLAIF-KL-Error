@@ -44,6 +44,7 @@ class ScriptArguments:
         metadata={"help": "dataset name to load and label"},
     )
     tag: str = field(
+        default="default",
         metadata={"help": "tag for the experiment"},
     )
     split: str = field(
@@ -87,12 +88,16 @@ class ScriptArguments:
         metadata={"help": "dataset cache directory"},
     )
     process_all_splits: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "process all splits in the dataset instead of just the specified split"},
     )
     seed: int = field(
         default=42,
         metadata={"help": "random seed for Bernoulli sampling"},
+    )
+    save_as_default: bool = field(
+        default=False,
+        metadata={"help": "the bt_probs and scores don't have the suffix {suffix}"},
     )
 
 
@@ -120,6 +125,15 @@ def load_generated_dataset(script_args):
     print(f"Evaluation dataset size: {len(eval_dataset)}")
     return eval_dataset
 
+def sanitize_model_name(model_id):
+    """Convert model ID to a safe column name suffix"""
+    model_name = model_id.split("/")[-1]
+    # Replace problematic characters with underscores
+    model_name = model_name.replace("-", "_").replace(".", "_")
+    # Truncate if too long
+    if len(model_name) > 20:
+        model_name = model_name[:20]
+    return model_name
 
 # Load model and tokenizer for inference
 def load_score_model(script_args):
@@ -205,7 +219,8 @@ def load_score_model(script_args):
 
 # Evaluate reward of responses
 def evaluate_reward(model, tokenizer, response_dataset, script_args):
-    model_name = script_args.score_model_id.split("/")[-1]
+    model_name = sanitize_model_name(script_args.score_model_id)
+    suffix = f"_{model_name}" if not script_args.save_as_default else ""
 
     generator, num_iters = sample_every_k_batched(
         response_dataset,
@@ -280,13 +295,13 @@ def evaluate_reward(model, tokenizer, response_dataset, script_args):
                 for i, (idx, cs, rs, prob) in enumerate(zip(indices, chosen_scores, rejected_scores, bt_probs)):
                     if idx not in result:
                         result[idx] = {
-                            f"chosen_score_{model_name}": [],
-                            f"rejected_score_{model_name}": [],
-                            f"bt_prob_{model_name}": []
+                            f"chosen_score{suffix}": [],
+                            f"rejected_score{suffix}": [],
+                            f"bt_prob{suffix}": []
                         }
-                    result[idx][f"chosen_score_{model_name}"].append(cs)
-                    result[idx][f"rejected_score_{model_name}"].append(rs)
-                    result[idx][f"bt_prob_{model_name}"].append(prob)
+                    result[idx][f"chosen_score{suffix}"].append(cs)
+                    result[idx][f"rejected_score{suffix}"].append(rs)
+                    result[idx][f"bt_prob{suffix}"].append(prob)
 
             if accelerator.is_local_main_process:
                 # Update progress bar
@@ -300,24 +315,24 @@ def evaluate_reward(model, tokenizer, response_dataset, script_args):
             for k, v in d.items():
                 if k not in results:
                     results[k] = {
-                        f"chosen_score_{model_name}": [],
-                        f"rejected_score_{model_name}": [],
-                        f"bt_prob_{model_name}": []
+                        f"chosen_score{suffix}": [],
+                        f"rejected_score{suffix}": [],
+                        f"bt_prob{suffix}": []
                     }
-                results[k][f"chosen_score_{model_name}"].extend(v[f"chosen_score_{model_name}"])
-                results[k][f"rejected_score_{model_name}"].extend(v[f"rejected_score_{model_name}"])
-                results[k][f"bt_prob_{model_name}"].extend(v[f"bt_prob_{model_name}"])
+                results[k][f"chosen_score{suffix}"].extend(v[f"chosen_score{suffix}"])
+                results[k][f"rejected_score{suffix}"].extend(v[f"rejected_score{suffix}"])
+                results[k][f"bt_prob{suffix}"].extend(v[f"bt_prob{suffix}"])
 
         def get_column(col):
             return [
-                np.mean(results[idx][col]) if idx in results else None
+                float(np.mean(results[idx][col])) if idx in results and results[idx][col] else None 
                 for idx in range(len(response_dataset))
             ]
 
         for col in [
-            f"chosen_score_{model_name}",
-            f"rejected_score_{model_name}",
-            f"bt_prob_{model_name}"
+            f"chosen_score{suffix}",
+            f"rejected_score{suffix}",
+            f"bt_prob{suffix}"
         ]:
             if col in response_dataset.column_names:
                 response_dataset = response_dataset.remove_columns(col)
@@ -359,20 +374,8 @@ def main():
             script_args.tag,
         )
     else:
-        # Dataset
-        response_dataset = load_generated_dataset(script_args)
+       raise NotImplementedError("Processing only a single split is not implemented yet.")
 
-        # Evaluation
-        response_dataset = evaluate_reward(model, tokenizer, response_dataset, script_args)
-
-        # Push to Hub
-        DatasetDict(
-            {script_args.split: response_dataset},
-        ).push_to_hub(
-            HUGGINGFACE_CONFIGS["prefix"]["evaluations"] + script_args.dataset,
-            script_args.tag,
-        )
-    
     print('Finished Label BT script - dataset labeled with Bradley-Terry probabilities')
 
 

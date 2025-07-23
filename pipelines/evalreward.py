@@ -113,7 +113,7 @@ def load_score_model(script_args):
         model = AutoModel.from_pretrained(
             script_args.score_model_id,
             torch_dtype=torch.bfloat16,
-            device_map={"": accelerator.local_process_index},
+            device_map={"": Accelerator().local_process_index},
             # This is needed as EurusRewardModel is not in transformers' model registry
             trust_remote_code=True,
             use_cache=True,
@@ -133,7 +133,14 @@ def load_score_model(script_args):
 
 
 # Evaluate reward of responses
-def evaluate_reward(model, tokenizer, response_dataset, script_args):
+def evaluate_reward(model, tokenizer, response_dataset, script_args, response_column):
+    if response_column == "response":
+        new_column_name = "reward_score_generated"
+    elif response_column == "chosen":
+        new_column_name = "reward_score_chosen"
+    else:
+        raise ValueError(f"Unknown response column: {response_column}")
+
     generator, num_iters = sample_every_k_batched(
         response_dataset,
         script_args.every_k,
@@ -150,7 +157,7 @@ def evaluate_reward(model, tokenizer, response_dataset, script_args):
         for indices, samples in process_indices_and_samples:
             with torch.no_grad():
                 inputs = tokenizer(
-                    [sample["prompt"] + sample["response"] for sample in samples],
+                    [sample["prompt"] + sample[response_column] for sample in samples],
                     max_length=script_args.model_max_length,
                     truncation=script_args.truncation,
                     padding=script_args.padding,
@@ -183,12 +190,12 @@ def evaluate_reward(model, tokenizer, response_dataset, script_args):
 
     # Add or replace the 'reward_score' column in the dataset
     response_dataset = (
-        response_dataset.remove_columns("reward_score")
-        if "reward_score" in response_dataset.column_names
+        response_dataset.remove_columns(new_column_name)
+        if new_column_name in response_dataset.column_names
         else response_dataset
     )
     response_dataset = response_dataset.add_column(
-        "reward_score",
+        new_column_name,
         [
             np.mean(results[idx]) if idx in results else None
             for idx in range(len(response_dataset))
@@ -197,10 +204,8 @@ def evaluate_reward(model, tokenizer, response_dataset, script_args):
     return response_dataset
 
 
-def main():
+def main(script_args: ScriptArguments):
     print('Start Evalreward.py!!')
-    parser = HfArgumentParser(ScriptArguments)
-    script_args = parser.parse_args_into_dataclasses()[0]
 
     # Find the reward model by dataset type
     for dataset_prefix in REWARD_CONFIGS.keys():
@@ -217,7 +222,8 @@ def main():
     response_dataset = load_generated_dataset(script_args)
 
     # Evaluation
-    response_dataset = evaluate_reward(model, tokenizer, response_dataset, script_args)
+    response_dataset = evaluate_reward(model, tokenizer, response_dataset, script_args, "response")
+    response_dataset = evaluate_reward(model, tokenizer, response_dataset, script_args, "chosen")
 
     # Push to Hub
     DatasetDict(
@@ -230,4 +236,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = HfArgumentParser(ScriptArguments)
+    script_args = parser.parse_args_into_dataclasses()[0]
+    main(script_args)

@@ -5,5 +5,8 @@ from .utils import (
     generate_sweep_tasks,
     wandb_init,
     sample_every_k_batched,
+    load_and_format_dataset,
+    sanitize_model_name,
+    check_resource_exists
 )
 from .slurm import find_next_request_gres

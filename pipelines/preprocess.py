@@ -190,12 +190,12 @@ def format_and_upload(dataset_name, raw_train_dataset, raw_eval_dataset):
         }
     ).push_to_hub(HUGGINGFACE_CONFIGS["prefix"]["datasets"] + dataset_name)
     # Add the dataset to the collection
-    add_collection_item(
-        collection_slug=HUGGINGFACE_CONFIGS["collections"]["datasets"],
-        item_id=HUGGINGFACE_CONFIGS["prefix"]["datasets"] + dataset_name,
-        item_type="dataset",
-        exists_ok=True,
-    )
+    # add_collection_item(
+    #     collection_slug=HUGGINGFACE_CONFIGS["collections"]["datasets"],
+    #     item_id=HUGGINGFACE_CONFIGS["prefix"]["datasets"] + dataset_name,
+    #     item_type="dataset",
+    #     exists_ok=True,
+    # )
 
 
 def display_dataset(dataset_name):

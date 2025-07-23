@@ -1,4 +1,4 @@
-local: "T4:1"
+local: "A100:1"
 
 config_file:
   SFT: ./configs/accelerate/sft/zero2.yaml
@@ -14,6 +14,12 @@ pipelines:
     rtxa6000:
       per_device_train_batch_size: 10
       per_device_eval_batch_size: 10
+    A100:
+      per_device_train_batch_size: 10
+      per_device_eval_batch_size: 10
+    A100test:
+      per_device_train_batch_size: 2
+      per_device_eval_batch_size: 2
     T4:
       per_device_train_batch_size: 1
       per_device_eval_batch_size: 1
@@ -28,6 +34,18 @@ pipelines:
       per_device_eval_batch_size: 2
       per_device_generation_batch_size: 16
       per_device_evalreward_batch_size: 8
+    A100:
+      per_device_train_batch_size: 4
+      per_device_eval_batch_size: 4
+      per_device_generation_batch_size: 4
+      per_device_evalreward_batch_size: 4
+      gradient_accumulation_steps: 4
+    A100test:
+      per_device_train_batch_size: 1
+      per_device_eval_batch_size: 1
+      per_device_generation_batch_size: 1
+      per_device_evalreward_batch_size: 1
+      gradient_accumulation_steps: 16
     T4:
       per_device_train_batch_size: 1
       per_device_eval_batch_size: 1
@@ -38,6 +56,10 @@ pipelines:
       per_device_generation_batch_size: 4
     rtxa6000:
       per_device_generation_batch_size: 8
+    A100:
+      per_device_generation_batch_size: 16
+    A100test:
+      per_device_generation_batch_size: 4
     T4:
       per_device_generation_batch_size: 1
   EVALREWARD:
@@ -45,5 +67,9 @@ pipelines:
       per_device_evalreward_batch_size: 8
     rtxa6000:
       per_device_evalreward_batch_size: 16
+    A100:
+      per_device_evalreward_batch_size: 16
+    A100test:
+      per_device_evalreward_batch_size: 4
     T4:
       per_device_evalreward_batch_size: 1

@@ -142,7 +142,7 @@ class GeneralizedDPOTrainer(Trainer):
         dro: float = 0.0,  # Add new parameter for DRO-DPR
         omega: float = 0.0,  # Add new parameter for DRO-DPR gradient weight
         beta_prime: float = 1.0,  # Add new parameter for DR_DPO robust aggregation
-        epsilon: float = 0.1,  # Add new parameter for RDPO robustness
+        epsilon: float = 0.1,  # Default value for RDPO robustness. Set to 0.1 as a reasonable starting point; adjust as needed based on use case or empirical results.
     """
 
     _tag_names = ["trl", "dpo"]

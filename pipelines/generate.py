@@ -17,7 +17,6 @@ from peft import PeftModel
 from accelerate import Accelerator
 from accelerate.utils import gather_object
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils import CONFIGS
 
 HUGGINGFACE_CONFIGS = CONFIGS.services.huggingface

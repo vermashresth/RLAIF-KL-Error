@@ -27,6 +27,10 @@ DRO_DPR:
   - dro
   - omega
   - loss_type
+DR_DPO:
+  - beta
+  - beta_prime
+  - loss_type
 MIX:
   - beta
   - r

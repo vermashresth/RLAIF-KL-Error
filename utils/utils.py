@@ -263,16 +263,15 @@ def apply_noise_and_resampling(dataset, script_args, is_training=True):
     return dataset
 
 
-def load_and_format_dataset(script_args, format_type, resample=True):
+def load_and_format_dataset(script_args, format_type):
     """Load processed RLHF dataset and format for SFT or DPO training"""
     dataset = load_dataset(
         HUGGINGFACE_CONFIGS["prefix"]["datasets"] + script_args.dataset,
         cache_dir=getattr(script_args, 'dataset_cache_dir', None),
     )
 
-    if resample:
-        train_dataset = apply_noise_and_resampling(dataset["train"], script_args, is_training=True)
-        eval_dataset = apply_noise_and_resampling(dataset["eval"], script_args, is_training=False)
+    train_dataset = apply_noise_and_resampling(dataset["train"], script_args, is_training=True)
+    eval_dataset = apply_noise_and_resampling(dataset["eval"], script_args, is_training=False)
 
     if format_type == "sft":
         def format_func(sample):

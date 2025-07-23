@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import sys
+
 import argparse
 
 
@@ -16,7 +16,6 @@ from utils import format_run_name, CONFIGS, check_resource_exists, sanitize_mode
 HUGGINGFACE_CONFIGS = CONFIGS.services.huggingface
 DEVICE_CONFIGS = CONFIGS.devices.devices
 OPTIM_CONFIGS = CONFIGS.pipelines.optim
-CDPO_PARAMS_CONFIGS = CONFIGS.cdpo.params
 
 
 def get_batch_size_params(pipeline, gres):
@@ -25,74 +24,16 @@ def get_batch_size_params(pipeline, gres):
     return DEVICE_CONFIGS["pipelines"][pipeline][device_type]
 
 
-def validate_extra_args(pipeline, extra_args_dict):
-    """Validate that extra arguments match the cdpo/params config for the given pipeline."""
-    if pipeline not in CDPO_PARAMS_CONFIGS:
-        raise ValueError(f"Pipeline '{pipeline}' not found in cdpo/params config")
-    
-    required_params = CDPO_PARAMS_CONFIGS[pipeline]
-    
-    # Check that all provided extra args are valid for this pipeline
-    for arg_name in extra_args_dict.keys():
-        if arg_name not in required_params:
-            raise ValueError(f"Argument '{arg_name}' is not valid for pipeline '{pipeline}'. "
-                           f"Valid arguments are: {required_params}")
-    
-    return True
-
-
-def parse_extra_args(unknown_args):
-    """Parse unknown arguments into a dictionary."""
-    extra_args = {}
-    i = 0
-    while i < len(unknown_args):
-        arg = unknown_args[i]
-        if arg.startswith('--'):
-            arg_name = arg[2:]  # Remove '--' prefix
-            # Check if next item exists and doesn't start with '--'
-            if i + 1 < len(unknown_args) and not unknown_args[i + 1].startswith('--'):
-                value = unknown_args[i + 1]
-                # Try to convert to appropriate type
-                try:
-                    # Try int first
-                    if '.' not in value:
-                        extra_args[arg_name] = int(value)
-                    else:
-                        extra_args[arg_name] = float(value)
-                except ValueError:
-                    # Keep as string if conversion fails
-                    extra_args[arg_name] = value
-                i += 2
-            else:
-                # Boolean flag
-                extra_args[arg_name] = True
-                i += 1
-        else:
-            i += 1
-    return extra_args
-
-
-def create_arguments(process, args, extra_args=None):
+def create_arguments(process, args):
     """Create arguments for any process from execute arguments."""
     
-    # Set default values for args that might not be present
-    beta = getattr(args, 'beta', 0.1)  # Default beta value
-    
-    # Override with extra_args if provided (for DPO)
-    if extra_args:
-        beta = extra_args.get('beta', beta)
-    
     extra_params = {
-        "beta": beta,
+        "beta": args.beta,
         "noise_type": args.noise_type,
         "noise_level": args.noise_level,
         "loss_type": args.loss_type,
         "reward_model": sanitize_model_name(args.reward_model) if args.reward_model else None,
     }
-    
-    # Add extra arguments to extra_params if provided
-    if extra_args:
-        extra_params.update(extra_args)
 
     if process == "sft":
         # Get config parameters like cdpo_cli does
@@ -129,29 +70,20 @@ def create_arguments(process, args, extra_args=None):
         # Get config parameters like cdpo_cli does
         batch_params = get_batch_size_params("DPO", args.gres)
         
-        # Build DPO script arguments with base args and extra args
-        dpo_script_args = {
-            "pipeline": args.pipeline,
-            "model": args.model,
-            "dataset": args.dataset,
-            "tag": args.tag,
-            "beta": beta,
-            "loss_type": args.loss_type,
-            "reward_model": args.reward_model,
-            "noise_type": args.noise_type,
-            "noise_level": args.noise_level,
-            "per_device_generation_batch_size": batch_params["per_device_generation_batch_size"],
-            "per_device_evalreward_batch_size": batch_params["per_device_evalreward_batch_size"],
-            "use_flash_attn": args.use_flash_attn,
-        }
-        
-        # Add extra arguments if provided
-        if extra_args:
-            for key, value in extra_args.items():
-                if hasattr(ScriptArgumentsDPO, key):
-                    dpo_script_args[key] = value
-        
-        script_args = ScriptArgumentsDPO(**dpo_script_args)
+        script_args = ScriptArgumentsDPO(
+            pipeline=args.pipeline,
+            model=args.model,
+            dataset=args.dataset,
+            tag=args.tag,
+            beta=args.beta,
+            loss_type=args.loss_type,
+            reward_model=args.reward_model,
+            noise_type=args.noise_type,
+            noise_level=args.noise_level,
+            per_device_generation_batch_size=batch_params["per_device_generation_batch_size"],
+            per_device_evalreward_batch_size=batch_params["per_device_evalreward_batch_size"],
+            use_flash_attn=args.use_flash_attn,
+        )
         
         training_args = TrainingArgumentsDPO(
             num_train_epochs=args.num_dpo_train_epochs,
@@ -214,13 +146,11 @@ def create_arguments(process, args, extra_args=None):
 
 
 
-def main(args, extra_args=None):
+def main(args):
     """Execute the full pipeline with parsed arguments."""
 
     print(f"🎯 Selected processes: {', '.join(args.processes)}")
     print(f"🖥️  GPU resources: {args.gres}")
-    if extra_args:
-        print(f"🔧 Extra arguments: {extra_args}")
     if args.overwrite:
         print("🔄 Overwrite mode enabled - will skip smart checking and force re-run all steps")
     else:
@@ -242,7 +172,7 @@ def main(args, extra_args=None):
     # Step 2: DPO Training
     if "dpo" in args.processes:
         # Check if we should skip DPO
-        script_args, training_args = create_arguments("dpo", args, extra_args)
+        script_args, training_args = create_arguments("dpo", args)
         if args.overwrite or not check_resource_exists("dpo", script_args, args.tag):
             print("🚀 Starting DPO Training...")
             dpo_main(script_args, training_args)
@@ -254,7 +184,7 @@ def main(args, extra_args=None):
 
     # Step 3: Generation
     if "generate" in args.processes:
-        script_args = create_arguments("generate", args, extra_args)
+        script_args = create_arguments("generate", args)
         if args.overwrite or not check_resource_exists("generate", script_args, args.tag):
             print("🚀 Starting Generation...")
             generate_main(script_args)
@@ -267,7 +197,7 @@ def main(args, extra_args=None):
 
     # Step 4: EvalReward
     if "evalreward" in args.processes:
-        script_args = create_arguments("evalreward", args, extra_args)
+        script_args = create_arguments("evalreward", args)
         if args.overwrite or not check_resource_exists("evalreward", script_args, args.tag):
             print("🚀 Starting EvalReward...")
             evalreward_main(script_args)
@@ -292,11 +222,12 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", required=True, help="Dataset name (e.g., U0)")
     parser.add_argument("--tag", required=True, help="Tag for the experiment (e.g., tag1)")
     
-    # Optional arguments - Remove beta since it will be handled as extra arg
+    # Optional arguments
     parser.add_argument("--pipeline", help="DPO pipeline name (e.g., DPO, DPO-DRO)")
     parser.add_argument("--reward_model", default="openbmb/Eurus-RM-7b", help="Reward model name")
     parser.add_argument("--noise_type", help="Type of noise (e.g., label_switching, bt_noise_gauss)")
     parser.add_argument("--noise_level", type=float, help="Level of noise (e.g., 0.4, 0.5)")
+    parser.add_argument("--beta", type=float, help="Beta parameter for DPO (e.g., 0.1)")
     parser.add_argument("--lora_r", type=int, default=64, help="LoRA r value (default: 64)")
     parser.add_argument("--lora_alpha", type=int, default=16, help="LoRA alpha value (default: 16)")
     parser.add_argument("--loss_type", help="Loss type (e.g., generalized_sigmoid)")
@@ -325,17 +256,5 @@ if __name__ == "__main__":
     parser.add_argument("--overwrite", action="store_true", 
                        help="Force overwrite existing models/datasets (skip smart checking)")
     
-    args, unknown_args = parser.parse_known_args()
-    
-    # Parse extra arguments
-    extra_args = parse_extra_args(unknown_args) if unknown_args else {}
-    
-    # Validate extra arguments if pipeline is specified and DPO is in processes
-    if args.pipeline and "dpo" in args.processes and extra_args:
-        try:
-            validate_extra_args(args.pipeline, extra_args)
-        except ValueError as e:
-            print(f"❌ Error: {e}")
-            sys.exit(1)
-    
-    main(args, extra_args)
+    args = parser.parse_args()
+    main(args)

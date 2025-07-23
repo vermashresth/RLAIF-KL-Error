@@ -1313,6 +1313,8 @@ class GeneralizedDPOTrainer(Trainer):
             # New hyperparameter epsilon. Default unknown, but start with 0.1?
 
             # Robust reweighting based on noise rate
+            if self.epsilon >= 0.5:
+                raise ValueError(f"Invalid value for epsilon: {self.epsilon}. Epsilon must be less than 0.5 to avoid division by zero.")
             weight_factor = 1.0 / (1.0 - 2.0 * self.epsilon)
             
             # The robust loss combines both terms with appropriate weighting

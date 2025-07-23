@@ -142,6 +142,7 @@ class GeneralizedDPOTrainer(Trainer):
         dro: float = 0.0,  # Add new parameter for DRO-DPR
         omega: float = 0.0,  # Add new parameter for DRO-DPR gradient weight
         beta_prime: float = 1.0,  # Add new parameter for DR_DPO robust aggregation
+        epsilon: float = 0.1,  # Default value for RDPO robustness. Set to 0.1 as a reasonable starting point; adjust as needed based on use case or empirical results.
     """
 
     _tag_names = ["trl", "dpo"]
@@ -195,7 +196,10 @@ class GeneralizedDPOTrainer(Trainer):
             "kto_pair",
             "generalized_sigmoid",
             "generalized_sigmoid_smooth_label",
+            "generalized_sigmoid_dynamic_smooth_label",
+            "generalized_sigmoid_dro_dynamic_smooth_label",
             "dr_dpo",
+            "rdpo",
         ] = "generalized_sigmoid_smooth_label",
         generation_reuse_multiplier: Optional[int] = None,
         generation_num_batches: Optional[int] = None,
@@ -215,6 +219,7 @@ class GeneralizedDPOTrainer(Trainer):
         dro: float = 0.0,  # Add new parameter for DRO-DPR
         omega: float = 0.0,  # Add new parameter for DRO-DPR gradient weight
         beta_prime: float = 1.0,  # Add new parameter for DR_DPO
+        epsilon: float = 0.1,  # Add new parameter for RDPO robustness
         ##############################
     ):
         if model_init_kwargs is None:
@@ -441,6 +446,7 @@ class GeneralizedDPOTrainer(Trainer):
         self.dro = dro
         self.omega = omega
         self.beta_prime = beta_prime
+        self.epsilon = epsilon
         self._dpp_generation_inputs = []
         self._dpp_generation_outputs = []
         self._dpr_generation_inputs = []
@@ -1291,29 +1297,6 @@ class GeneralizedDPOTrainer(Trainer):
                     * self.pi
                     * (F.logsigmoid(self.beta * logits) * self._dpp_sampling_mask) ** 2
                 )
-        elif self.loss_type == "rev_generalized_sigmoid_dro_dynamic_smooth_label":
-            # Solve DRO optimization to get adjusted probabilities
-            nu = 1 # for 0, p=q
-            # nu = 1 is reasonable, nu cpould be anything positive
-            # q could be less than 0.5, chosen could be because of sampling
-
-            adjusted_chosen_rejected_probs = self.optimize_p_on_kl_boundary(chosen_rejected_probs, logits, nu=nu)
-            smooth_dro_loss = -(
-                -F.logsigmoid(self.beta * logits) * adjusted_chosen_rejected_probs
-                - F.logsigmoid(-self.beta * logits) * (1 - adjusted_chosen_rejected_probs)
-            )
-            losses = smooth_dro_loss
-            if train_eval == "train":
-                losses -= (
-                    0.5
-                    * self.rho
-                    * (F.logsigmoid(self.beta * logits) * self._ddp_sampling_mask) ** 2
-                )
-                losses -= (
-                    0.5
-                    * self.pi
-                    * (F.logsigmoid(self.beta * logits) * self._dpp_sampling_mask) ** 2
-                )
         elif self.loss_type == "dr_dpo":
             # Dr.DPO (Distributionally Robust DPO) from Wu et al. (2024)
             # New hyperparameter beta_prime. Default to 1.
@@ -1325,9 +1308,22 @@ class GeneralizedDPOTrainer(Trainer):
             
             # Convert to per-sample loss for consistency with other methods
             losses = dr_dpo_loss.expand(standard_losses.shape)
+        elif self.loss_type == "rdpo":
+            # Robust DPO loss from Chowdhury et al. (2024)
+            # New hyperparameter epsilon. Default unknown, but start with 0.1?
+
+            # Robust reweighting based on noise rate
+            if self.epsilon >= 0.5:
+                raise ValueError(f"Invalid value for epsilon: {self.epsilon}. Epsilon must be less than 0.5 to avoid division by zero.")
+            weight_factor = 1.0 / (1.0 - 2.0 * self.epsilon)
+            
+            # The robust loss combines both terms with appropriate weighting
+            losses = weight_factor * (
+                (1.0 - self.epsilon) * -F.logsigmoid(self.beta * logits) - self.epsilon * -F.logsigmoid(-self.beta * logits)
+            )
         else:
             raise ValueError(
-                f"Unknown loss type: {self.loss_type}. Should be one of ['sigmoid', 'hinge', 'ipo', 'kto_pair', 'generalized_sigmoid', 'generalized_sigmoid_smooth_label', 'dr_dpo']"
+                f"Unknown loss type: {self.loss_type}. Should be one of ['sigmoid', 'label_smoothing', 'hinge', 'ipo', 'kto_pair', 'generalized_sigmoid', 'generalized_sigmoid_smooth_label', 'generalized_sigmoid_dynamic_smooth_label', 'generalized_sigmoid_dro_dynamic_smooth_label', 'dr_dpo', 'rdpo']"
             )
 
         ##############################

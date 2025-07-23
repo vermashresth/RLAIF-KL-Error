@@ -61,6 +61,9 @@ class ScriptArguments:
         metadata={"help": "tag for the experiment"},
     )
     beta: float = field(default=0.1, metadata={"help": "the beta parameter for STDPO"})
+    label_smoothing: float = field(
+        default=0.0, metadata={"help": "label smoothing parameter for training"}
+    )
     r: float = field(
         default=0.0, metadata={"help": "sampling mixing probability for DDP"}
     )
@@ -111,6 +114,7 @@ class ScriptArguments:
     )
     omega: float = field(default=0.0, metadata={"help": "gradient coefficient for DRO-DPR"})
     beta_prime: float = field(default=1.0, metadata={"help": "beta_prime parameter for DR_DPO"})
+    epsilon: float = field(default=0.0, metadata={"help": "epsilon parameter for RDPO"})
     loss_type: str = field(
         default="generalized_sigmoid_smooth_label",
         metadata={"help": "loss type used for training"},
@@ -345,6 +349,8 @@ def train(model, tokenizer, train_dataset, eval_dataset, script_args, training_a
         dro=script_args.dro,
         omega=script_args.omega,
         beta_prime=script_args.beta_prime,
+        epsilon=script_args.epsilon,
+        label_smoothing=script_args.label_smoothing,
     )
 
     reward_model, reward_tokenizer, reward_model_reverse = None, None, None
@@ -451,6 +457,7 @@ def main(script_args: ScriptArguments, training_args: TrainingArguments):
             "dro": script_args.dro,
             "omega": script_args.omega,
             "beta_prime": script_args.beta_prime,
+            "epsilon": script_args.epsilon,
             "loss_type": script_args.loss_type,
             "reward_model": sanitize_model_name(script_args.reward_model),
             "noise_type": script_args.noise_type,

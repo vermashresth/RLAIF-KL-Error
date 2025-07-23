@@ -1,12 +1,6 @@
 DPO:
   - beta
   - loss_type
-DPO_NOISE:
-  - beta
-  - reward_model
-  - noise_type
-  - noise_level
-  - loss_type
 DDP:
   - beta
   - r

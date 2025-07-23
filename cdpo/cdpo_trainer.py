@@ -141,6 +141,7 @@ class GeneralizedDPOTrainer(Trainer):
         gamma: float = 0.0,
         dro: float = 0.0,  # Add new parameter for DRO-DPR
         omega: float = 0.0,  # Add new parameter for DRO-DPR gradient weight
+        beta_prime: float = 1.0,  # Add new parameter for DR_DPO robust aggregation
     """
 
     _tag_names = ["trl", "dpo"]
@@ -194,6 +195,7 @@ class GeneralizedDPOTrainer(Trainer):
             "kto_pair",
             "generalized_sigmoid",
             "generalized_sigmoid_smooth_label",
+            "dr_dpo",
         ] = "generalized_sigmoid_smooth_label",
         generation_reuse_multiplier: Optional[int] = None,
         generation_num_batches: Optional[int] = None,
@@ -212,6 +214,7 @@ class GeneralizedDPOTrainer(Trainer):
         gamma: float = 0.0,
         dro: float = 0.0,  # Add new parameter for DRO-DPR
         omega: float = 0.0,  # Add new parameter for DRO-DPR gradient weight
+        beta_prime: float = 1.0,  # Add new parameter for DR_DPO
         ##############################
     ):
         if model_init_kwargs is None:
@@ -437,6 +440,7 @@ class GeneralizedDPOTrainer(Trainer):
         self.gamma = gamma
         self.dro = dro
         self.omega = omega
+        self.beta_prime = beta_prime
         self._dpp_generation_inputs = []
         self._dpp_generation_outputs = []
         self._dpr_generation_inputs = []
@@ -1310,9 +1314,20 @@ class GeneralizedDPOTrainer(Trainer):
                     * self.pi
                     * (F.logsigmoid(self.beta * logits) * self._dpp_sampling_mask) ** 2
                 )
+        elif self.loss_type == "dr_dpo":
+            # Dr.DPO (Distributionally Robust DPO) from Wu et al. (2024)
+            # New hyperparameter beta_prime. Default to 1.
+            # Compute standard DPO losses for each sample
+            standard_losses = -F.logsigmoid(self.beta * logits)
+            
+            # Apply Dr.DPO robust aggregation - direct implementation from their repo:
+            dr_dpo_loss = -self.beta_prime * torch.log(torch.mean(torch.exp(-standard_losses / self.beta_prime)))
+            
+            # Convert to per-sample loss for consistency with other methods
+            losses = dr_dpo_loss.expand(standard_losses.shape)
         else:
             raise ValueError(
-                f"Unknown loss type: {self.loss_type}. Should be one of ['sigmoid', 'hinge', 'ipo', 'kto_pair', 'generalized_sigmoid', 'generalized_sigmoid_smooth_label']"
+                f"Unknown loss type: {self.loss_type}. Should be one of ['sigmoid', 'hinge', 'ipo', 'kto_pair', 'generalized_sigmoid', 'generalized_sigmoid_smooth_label', 'dr_dpo']"
             )
 
         ##############################

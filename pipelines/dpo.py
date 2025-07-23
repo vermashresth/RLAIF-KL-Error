@@ -110,6 +110,7 @@ class ScriptArguments:
         default=0.0, metadata={"help": "sampling mixing probability for DRO-DPR"}
     )
     omega: float = field(default=0.0, metadata={"help": "gradient coefficient for DRO-DPR"})
+    beta_prime: float = field(default=1.0, metadata={"help": "beta_prime parameter for DR_DPO"})
     loss_type: str = field(
         default="generalized_sigmoid_smooth_label",
         metadata={"help": "loss type used for training"},
@@ -295,6 +296,12 @@ def train(model, tokenizer, train_dataset, eval_dataset, script_args, training_a
         assert script_args.r == 0 and script_args.rho == 0
         assert script_args.p == 0 and script_args.pi == 0
         assert script_args.g == 0 and script_args.gamma == 0
+    elif script_args.pipeline == "DR_DPO":
+        print('Running DR_DPO!!!')
+        assert script_args.r == 0 and script_args.rho == 0
+        assert script_args.p == 0 and script_args.pi == 0
+        assert script_args.g == 0 and script_args.gamma == 0
+        assert script_args.dro == 0 and script_args.omega == 0
     elif script_args.pipeline == "MIX":
         pass
     else:
@@ -337,6 +344,7 @@ def train(model, tokenizer, train_dataset, eval_dataset, script_args, training_a
         gamma=script_args.gamma,
         dro=script_args.dro,
         omega=script_args.omega,
+        beta_prime=script_args.beta_prime,
     )
 
     reward_model, reward_tokenizer, reward_model_reverse = None, None, None
@@ -442,6 +450,7 @@ def main(script_args: ScriptArguments, training_args: TrainingArguments):
             "gamma": script_args.gamma,
             "dro": script_args.dro,
             "omega": script_args.omega,
+            "beta_prime": script_args.beta_prime,
             "loss_type": script_args.loss_type,
             "reward_model": sanitize_model_name(script_args.reward_model),
             "noise_type": script_args.noise_type,

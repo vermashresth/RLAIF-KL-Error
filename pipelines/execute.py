@@ -24,11 +24,11 @@ def get_batch_size_params(pipeline, gres):
     return DEVICE_CONFIGS["pipelines"][pipeline][device_type]
 
 
-def create_arguments(process, args):
+def create_arguments(process, args, extra_dpo_args={}):
     """Create arguments for any process from execute arguments."""
     
     extra_params = {
-        "beta": args.beta,
+        **extra_dpo_args,
         "noise_type": args.noise_type,
         "noise_level": args.noise_level,
         "loss_type": args.loss_type,
@@ -83,6 +83,7 @@ def create_arguments(process, args):
             per_device_generation_batch_size=batch_params["per_device_generation_batch_size"],
             per_device_evalreward_batch_size=batch_params["per_device_evalreward_batch_size"],
             use_flash_attn=args.use_flash_attn,
+            **extra_dpo_args
         )
         
         training_args = TrainingArgumentsDPO(
@@ -146,7 +147,7 @@ def create_arguments(process, args):
 
 
 
-def main(args):
+def main(args, extra_dpo_args=None):
     """Execute the full pipeline with parsed arguments."""
 
     print(f"🎯 Selected processes: {', '.join(args.processes)}")
@@ -172,7 +173,7 @@ def main(args):
     # Step 2: DPO Training
     if "dpo" in args.processes:
         # Check if we should skip DPO
-        script_args, training_args = create_arguments("dpo", args)
+        script_args, training_args = create_arguments("dpo", args, extra_dpo_args)
         if args.overwrite or not check_resource_exists("dpo", script_args, args.tag):
             print("🚀 Starting DPO Training...")
             dpo_main(script_args, training_args)
@@ -227,7 +228,6 @@ if __name__ == "__main__":
     parser.add_argument("--reward_model", default="openbmb/Eurus-RM-7b", help="Reward model name")
     parser.add_argument("--noise_type", help="Type of noise (e.g., label_switching, bt_noise_gauss)")
     parser.add_argument("--noise_level", type=float, help="Level of noise (e.g., 0.4, 0.5)")
-    parser.add_argument("--beta", type=float, help="Beta parameter for DPO (e.g., 0.1)")
     parser.add_argument("--lora_r", type=int, default=64, help="LoRA r value (default: 64)")
     parser.add_argument("--lora_alpha", type=int, default=16, help="LoRA alpha value (default: 16)")
     parser.add_argument("--loss_type", help="Loss type (e.g., generalized_sigmoid)")
@@ -256,5 +256,5 @@ if __name__ == "__main__":
     parser.add_argument("--overwrite", action="store_true", 
                        help="Force overwrite existing models/datasets (skip smart checking)")
     
-    args = parser.parse_args()
-    main(args)
+    args, extra_dpo_args = parser.parse_known_args()
+    main(args, extra_args)

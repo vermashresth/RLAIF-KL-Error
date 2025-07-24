@@ -1,28 +1,29 @@
-#!/usr/bin/env python3
-
-
 import argparse
-import re
 
-
+from pipelines.dpo import ScriptArguments as ScriptArgumentsDPO
+from pipelines.dpo import TrainingArguments as TrainingArgumentsDPO
+from pipelines.dpo import main as dpo_main
+from pipelines.evalreward import ScriptArguments as ScriptArgumentsEvalReward
+from pipelines.evalreward import main as evalreward_main
+from pipelines.generate import ScriptArguments as ScriptArgumentsGenerate
+from pipelines.generate import main as generate_main
 # Direct imports from pipelines
-from pipelines.sft import main as sft_main, ScriptArguments as ScriptArgumentsSFT, TrainingArguments as TrainingArgumentsSFT
-from pipelines.dpo import main as dpo_main, ScriptArguments as ScriptArgumentsDPO, TrainingArguments as TrainingArgumentsDPO
-from pipelines.generate import main as generate_main, ScriptArguments as ScriptArgumentsGenerate
-from pipelines.evalreward import main as evalreward_main, ScriptArguments as ScriptArgumentsEvalReward
-
+from pipelines.sft import ScriptArguments as ScriptArgumentsSFT
+from pipelines.sft import TrainingArguments as TrainingArgumentsSFT
+from pipelines.sft import main as sft_main
 # Import utils
-from utils import format_run_name, CONFIGS, check_resource_exists, sanitize_model_name
+from utils import (CONFIGS, check_resource_exists, format_run_name,
+                   sanitize_model_name)
 
 HUGGINGFACE_CONFIGS = CONFIGS.services.huggingface
 DEVICE_CONFIGS = CONFIGS.devices.devices
 OPTIM_CONFIGS = CONFIGS.pipelines.optim
 
 
-def get_batch_size_params(pipeline, gres):
-    """Get batch size parameters based on GPU device configuration."""
-    device_type = gres.split(":")[0] if ":" in gres else gres
-    return DEVICE_CONFIGS["pipelines"][pipeline][device_type]
+# def get_batch_size_params(pipeline, gres):
+#     """Get batch size parameters based on GPU device configuration."""
+#     device_type = gres.split(":")[0] if ":" in gres else gres
+#     return DEVICE_CONFIGS["pipelines"][pipeline][device_type]
 
 
 def create_arguments(process, args):
@@ -33,18 +34,18 @@ def create_arguments(process, args):
         "noise_type": args.noise_type,
         "noise_level": args.noise_level,
         "loss_type": args.loss_type,
-        "reward_model": sanitize_model_name(args.reward_model) if args.reward_model else None,
+        "resample_model": sanitize_model_name(args.resample_model) if args.resample_model else None,
     }
 
     if process == "sft":
         # Get config parameters like cdpo_cli does
-        batch_params = get_batch_size_params("SFT", args.gres)
+        # batch_params = get_batch_size_params("SFT", args.gres)
         
         script_args = ScriptArgumentsSFT(
             model=args.model,
             dataset=args.dataset,
             tag=args.tag,
-            reward_model=args.reward_model,
+            resample_model=args.resample_model,
             noise_type=args.noise_type,
             noise_level=args.noise_level,
             lora_alpha= args.lora_alpha,
@@ -55,8 +56,11 @@ def create_arguments(process, args):
         training_args = TrainingArgumentsSFT(
             num_train_epochs=args.num_sft_train_epochs,
             learning_rate=args.sft_learning_rate,
-            per_device_train_batch_size=batch_params["per_device_train_batch_size"],
-            per_device_eval_batch_size=batch_params["per_device_eval_batch_size"],
+            # per_device_train_batch_size=batch_params["per_device_train_batch_size"],
+            # per_device_eval_batch_size=batch_params["per_device_eval_batch_size"],
+            per_device_train_batch_size=args.sft_per_device_train_batch_size,
+            per_device_eval_batch_size=args.sft_per_device_eval_batch_size,
+            gradient_accumulation_steps=args.sft_gradient_accumulation_steps,
             save_strategy="epoch",
             logging_strategy="steps",
             logging_steps=10,
@@ -69,7 +73,7 @@ def create_arguments(process, args):
     
     elif process == "dpo":
         # Get config parameters like cdpo_cli does
-        batch_params = get_batch_size_params("DPO", args.gres)
+        # batch_params = get_batch_size_params("DPO", args.gres)
         
         script_args = ScriptArgumentsDPO(
             pipeline=args.pipeline,
@@ -78,20 +82,23 @@ def create_arguments(process, args):
             tag=args.tag,
             beta=args.beta,
             loss_type=args.loss_type,
-            reward_model=args.reward_model,
+            resample_model=args.resample_model,
             noise_type=args.noise_type,
             noise_level=args.noise_level,
-            per_device_generation_batch_size=batch_params["per_device_generation_batch_size"],
-            per_device_evalreward_batch_size=batch_params["per_device_evalreward_batch_size"],
             use_flash_attn=args.use_flash_attn,
+            per_device_generation_batch_size=args.per_device_generation_batch_size,
+            per_device_evalreward_batch_size=args.per_device_evalreward_batch_size,
         )
         
         training_args = TrainingArgumentsDPO(
             num_train_epochs=args.num_dpo_train_epochs,
             learning_rate=args.dpo_learning_rate,
-            per_device_train_batch_size=batch_params["per_device_train_batch_size"],
-            per_device_eval_batch_size=batch_params["per_device_eval_batch_size"],
-            gradient_accumulation_steps=batch_params["gradient_accumulation_steps"],
+            # per_device_train_batch_size=batch_params["per_device_train_batch_size"],
+            # per_device_eval_batch_size=batch_params["per_device_eval_batch_size"],
+            # gradient_accumulation_steps=batch_params["gradient_accumulation_steps"],
+            per_device_train_batch_size=args.dpo_per_device_train_batch_size,
+            per_device_eval_batch_size=args.dpo_per_device_eval_batch_size,
+            gradient_accumulation_steps=args.dpo_gradient_accumulation_steps,
             save_strategy="epoch",
             logging_strategy="steps",
             logging_steps=10,
@@ -104,7 +111,7 @@ def create_arguments(process, args):
     
     elif process == "generate":
         # Get config parameters like cdpo_cli does
-        batch_params = get_batch_size_params("GEN", args.gres)
+        # batch_params = get_batch_size_params("GEN", args.gres)
         
         # Generate run name for DPO model
         if args.noise_type:
@@ -116,7 +123,8 @@ def create_arguments(process, args):
         script_args = ScriptArgumentsGenerate(
             run=run_name,
             tag=args.tag,
-            per_device_generation_batch_size=batch_params["per_device_generation_batch_size"],
+            # per_device_generation_batch_size=batch_params["per_device_generation_batch_size"],
+            per_device_generation_batch_size=args.per_device_generation_batch_size,
             eval_limit=args.eval_limit,
             use_flash_attn=args.use_flash_attn,
         )
@@ -125,7 +133,7 @@ def create_arguments(process, args):
     
     elif process == "evalreward":
         # Get config parameters like cdpo_cli does
-        batch_params = get_batch_size_params("EVALREWARD", args.gres)
+        # batch_params = get_batch_size_params("EVALREWARD", args.gres)
         
         # Generate run name for DPO model
         if args.noise_type:
@@ -137,7 +145,8 @@ def create_arguments(process, args):
         script_args = ScriptArgumentsEvalReward(
             run_name=run_name,
             tag=args.tag,
-            per_device_evalreward_batch_size=batch_params["per_device_evalreward_batch_size"],
+            # per_device_evalreward_batch_size=batch_params["per_device_evalreward_batch_size"],
+            per_device_evalreward_batch_size=args.per_device_evalreward_batch_size,
         )
         
         return script_args
@@ -147,11 +156,11 @@ def create_arguments(process, args):
 
 
 
-def main(args, extra_dpo_args=None):
+def main(args):
     """Execute the full pipeline with parsed arguments."""
 
     print(f"🎯 Selected processes: {', '.join(args.processes)}")
-    print(f"🖥️  GPU resources: {args.gres}")
+    # print(f"🖥️  GPU resources: {args.gres}")
     if args.overwrite:
         print("🔄 Overwrite mode enabled - will skip smart checking and force re-run all steps")
     else:
@@ -226,7 +235,7 @@ if __name__ == "__main__":
     # Optional arguments
     parser.add_argument("--pipeline", help="DPO pipeline name (e.g., DPO, DPO-DRO)")
     parser.add_argument("--beta", type=float, default=0.1, help="Beta value for DPO (default: 0.1)")
-    parser.add_argument("--reward_model", default="openbmb/Eurus-RM-7b", help="Reward model name")
+    parser.add_argument("--resample_model", default="openbmb/Eurus-RM-7b", help="Resample rewrd model name")
     parser.add_argument("--noise_type", help="Type of noise (e.g., label_switching, bt_noise_gauss)")
     parser.add_argument("--noise_level", type=float, help="Level of noise (e.g., 0.4, 0.5)")
     parser.add_argument("--lora_r", type=int, default=64, help="LoRA r value (default: 64)")
@@ -235,11 +244,25 @@ if __name__ == "__main__":
     parser.add_argument("--model_max_length", type=int, default=1024, help="Maximum sequence length for the model (default: 1024)")
     parser.add_argument("--num_sft_train_epochs", type=int, default=5, help="Number of SFT training epochs (default: 1)")
     parser.add_argument("--num_dpo_train_epochs", type=int, default=5, help="Number of DPO training epochs (default: 1)")
-    parser.add_argument("--sft_learning_rate", type=float, default=2e-5, help="Learning rate for training (default: 2e-5)")
-    parser.add_argument("--dpo_learning_rate", type=float, default=1e-5, help="Learning rate for DPO training (default: 1e-5)")
-        
+
+    # SFT Training arguments
+    parser.add_argument("--sft_learning_rate", type=float, default=5e-5, help="Learning rate for training (default: 2e-5)")
+    parser.add_argument("--sft_per_device_train_batch_size", type=int, default=16, help="SFT per device train batch size (default: 16)")
+    parser.add_argument("--sft_per_device_eval_batch_size", type=int, default=16, help="SFT per device eval batch size (default: 16)")
+    parser.add_argument("--sft_gradient_accumulation_steps", type=int, default=1, help="Gradient accumulation steps (default: 1)")
+
+    # DPO Training arguments
+    parser.add_argument("--dpo_learning_rate", type=float, default=2e-5, help="Learning rate for DPO training (default: 1e-5)")
+    parser.add_argument("--dpo_per_device_train_batch_size", type=int, default=4, help="DPO per device train batch size (default: 4)")
+    parser.add_argument("--dpo_per_device_eval_batch_size", type=int, default=4, help="DPO per device eval batch size (default: 4)")
+    parser.add_argument("--dpo_gradient_accumulation_steps", type=int, default=4, help="DPO gradient accumulation steps (default: 4)")
+
+    # Generation arguments
+    parser.add_argument("--per_device_generation_batch_size", type=int, default=8, help="Per device generation batch size (default: 8)")
+    parser.add_argument("--per_device_evalreward_batch_size", type=int, default=8, help="Per device evalreward batch size (default: 8)")
+
     # GPU resource specification (required for config-driven parameters)
-    parser.add_argument("-g", "--gres", required=True, help="GPU resources (e.g., A100:1, A100) for automatic parameter configuration")
+    # parser.add_argument("-g", "--gres", required=True, help="GPU resources (e.g., A100:1, A100) for automatic parameter configuration")
     
     # Evaluation parameters
     parser.add_argument("--eval_limit", type=int, default=-1, help="Limit for evaluation samples (-1 for no limit)")
@@ -254,8 +277,7 @@ if __name__ == "__main__":
                        help="Specify which processes to execute (default: all)")
     
     # Overwrite control
-    parser.add_argument("--overwrite", action="store_true", 
-                       help="Force overwrite existing models/datasets (skip smart checking)")
+    parser.add_argument("--overwrite", action="store_true", help="Force overwrite existing models/datasets (skip smart checking)")
     
     args = parser.parse_args()
 

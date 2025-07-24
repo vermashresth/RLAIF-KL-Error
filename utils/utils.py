@@ -35,27 +35,22 @@ def format_args(value):
 def format_run_name(pipeline, model, dataset, extra_params):
     if pipeline == "SFT":
         configs = ""
-        # this part is for the reward evaluator, noise type and noies level
-        if "reward_model" in extra_params and extra_params["reward_model"] is not None:
-            configs += "reward_model" + str(extra_params["reward_model"])
-        if "noise_type" in extra_params and extra_params["noise_type"] is not None:
-            configs +=  "noise_type" + str(extra_params["noise_type"]) + str(extra_params["noise_level"])
-
     else:
         if pipeline not in PARAMS_CONFIGS:
             raise ValueError(f"Unknown pipeline name: {pipeline}")
-        required_params = set(PARAMS_CONFIGS[pipeline]) - set(["reward_model", "noise_type", "noise_level"])
+        required_params = set(PARAMS_CONFIGS[pipeline]) - set(["resample_model", "noise_type", "noise_level"])
         configs = "".join(
             [
                 (param_name if param_name != "loss_type" else "") + str(extra_params[param_name])
                 for param_name in required_params
             ]
         )
-        # this part is for the reward evaluator, noise type and noies level
-        if "reward_model" in extra_params and extra_params["reward_model"] is not None:
-            configs += str(extra_params["reward_model"])
-        if "noise_type" in extra_params and extra_params["noise_type"] is not None:
-            configs +=  str(extra_params["noise_type"]) + str(extra_params["noise_level"])
+
+    # this part is for the reward evaluator, noise type and noies level
+    if "resample_model" in extra_params and extra_params["resample_model"] is not None:
+        configs += str(extra_params["resample_model"])
+    if "noise_type" in extra_params and extra_params["noise_type"] is not None:
+        configs +=  str(extra_params["noise_type"]) + str(extra_params["noise_level"])
 
     run_name = pipeline + "_" + model + "_" + dataset + ("_" if configs else "") + configs
 
@@ -205,60 +200,81 @@ def sanitize_model_name(model_id: Optional[str]) -> Optional[str]:
 def apply_noise_and_resampling(dataset, script_args, is_training=True):
     """Helper function to handle noise injection and label resampling for both SFT and DPO"""
     
-    # Ensure bt_prob is directly assigned from bt_prob_{reward_model} if reward_model is provided
-    sanitized_reward_model = None
-    if hasattr(script_args, 'reward_model') and script_args.reward_model:
-        sanitized_reward_model = sanitize_model_name(script_args.reward_model)
+    # 1. We need to ensure the bt_noise column exists. First, check if a resampling model was given,
+    # in which case we will use the column bt_prob_{resample_model} if it exists. Next, search if a defualt
+    # bt_noise column exists, which is bt_prob_{dataset_name} where dataset_name is the name of the dataset.
+    # lastly if such column does not exist, try just bt_prob, which is the backwards compatibility case.
+    # If none of these columns exist, raise an error.
+
+    # 1. Ensure bt_prob is directly assigned from bt_prob_{resample_model} if resample_model is provided
+    sanitized_resample_model = None
+    if hasattr(script_args, 'resample_model') and script_args.resample_model:
+        sanitized_resample_model = sanitize_model_name(script_args.resample_model)
     else:
         # try default reward model of the dataset
         # replace numeric characters with ""
         dataset_name = re.sub(r'\d+', '', script_args.dataset)
         default_reward_model = REWARD_CONFIGS[dataset_name]['id']
-        sanitized_reward_model = sanitize_model_name(default_reward_model)
-    
-    if sanitized_reward_model is not None:
-        model_column = f"bt_prob_{sanitized_reward_model}"
+        sanitized_resample_model = sanitize_model_name(default_reward_model)
+
+    if sanitized_resample_model is not None:
+        model_column = f"bt_prob_{sanitized_resample_model}"
         dataset = dataset.rename_column(model_column, "bt_prob")
     else:
         # check if bt_prob is already present, backwards compatibility case
         if "bt_prob" not in dataset.column_names:
             raise ValueError("bt_prob column is missing in the dataset. Please ensure it is present.")
-        
-
-    # Apply noise to bt_prob before resampling (only for training)
+    
+    # Now inject noise, only needed in training
     if is_training and script_args.noise_type:
-        def apply_bt_noise(example):
+        def apply_noise(example):
             prob = example["bt_prob"]
-            if script_args.noise_type == "bt_prob_gauss":
+            if script_args.noise_type == "bt_noise_gauss":
                 noise = np.random.normal(0, script_args.noise_level)
                 example["bt_prob"] = float(expit(logit(prob + noise)))
-            elif script_args.noise_type == "bt_prob_adv":
+            elif script_args.noise_type == "bt_noise_adv":
                 noise = script_args.noise_level * np.random.uniform(0, 1) * np.sign(prob - 0.5)
                 example["bt_prob"] = float(np.clip(prob - noise, 0, 1))
-            elif script_args.noise_type == "bt_prob_flip":
+            elif script_args.noise_type == "bt_noise_flip":
                 example["bt_prob"] = 1 - prob if np.random.random() < script_args.noise_level else prob
+            elif script_args.noise_type == "label_switching":
+                # This is a special case where we just flip the label with a certain probability
+                if np.random.random() < script_args.noise_level:
+                    example["chosen"], example["rejected"] = example["rejected"], example["chosen"]
+                    example["bt_prob"] = 1 - prob
+            else:
+                raise ValueError(f"Unknown noise type: {script_args.noise_type}")
+            return example
+        dataset = dataset.map(apply_noise, num_proc=4, desc="Applying noise to bt_prob")
+
+    # 2. Resample labels according to bt_prob
+    if is_training and sanitized_resample_model is not None:
+        def resample_labels(example):
+            prob = example["bt_prob"]
+            label = np.random.choice(["y1", "y2"], p=[prob, 1 - prob])
+
+            # Flip again labels if noise type is label_switching
+            if is_training and script_args.noise_type == "label_switching":
+                if np.random.random() < script_args.noise_level:
+                    label = "y2" if label == "y1" else "y1"
+
+            if label == "y2":
+                example["chosen"], example["rejected"] = example["rejected"], example["chosen"]
+                example["bt_prob"] = 1 - prob
 
             return example
-
-        dataset = dataset.map(apply_bt_noise, num_proc=4, desc="Applying noise to bt_prob")
-
-    # Resample labels using bt_prob
-    def resample_labels(example):
-        prob = example["bt_prob"]
-        label = np.random.choice(["y1", "y2"], p=[prob, 1 - prob])
-
-        # Flip again labels 
-        if is_training and script_args.noise_type == "label_switching":
-            if np.random.random() < script_args.noise_level:
-                label = "y2" if label == "y1" else "y1"
-
-        if label == "y2":
-            example["chosen"], example["rejected"] = example["rejected"], example["chosen"]
-            example["bt_prob"] = 1 - prob  # Flip bt_prob to match the new label
         
-        return example
+        dataset = dataset.map(resample_labels, num_proc=4, desc="Resampling labels based on bt_prob")
 
-    dataset = dataset.map(resample_labels, num_proc=4, desc="Sampling from bt_prob")
+    # 3. Apply addition label switching noise if needed / does not affect bt_prob
+    if is_training and script_args.noise_type == "label_switching":
+        def apply_label_switching_noise(example):
+            if np.random.random() < script_args.noise_level:
+                example["chosen"], example["rejected"] = example["rejected"], example["chosen"]
+                example["bt_prob"] = 1 - example["bt_prob"]
+            return example
+        
+        dataset = dataset.map(apply_label_switching_noise, num_proc=4, desc="Applying label switching noise")
 
     return dataset
 
@@ -292,7 +308,7 @@ def get_process_output_resource(process, script_args):
             model=script_args.model,
             dataset=script_args.dataset,
             extra_params={
-                "reward_model": sanitize_model_name(script_args.reward_model) if script_args.reward_model else None,
+                "resample_model": sanitize_model_name(script_args.resample_model) if script_args.resample_model else None,
                 "noise_type": script_args.noise_type,
                 "noise_level": script_args.noise_level,
             },
@@ -310,7 +326,7 @@ def get_process_output_resource(process, script_args):
             extra_params={
                 "beta": script_args.beta,
                 "loss_type": script_args.loss_type,
-                "reward_model": sanitize_model_name(script_args.reward_model) if script_args.reward_model else None,
+                "resample_model": sanitize_model_name(script_args.resample_model) if script_args.resample_model else None,
                 "noise_type": script_args.noise_type,
                 "noise_level": script_args.noise_level,
             },

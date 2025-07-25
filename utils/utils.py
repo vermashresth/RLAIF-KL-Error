@@ -201,7 +201,7 @@ def apply_noise_and_resampling(dataset, script_args, is_training=True):
     """Helper function to handle noise injection and label resampling for both SFT and DPO"""
     
     # 1. We need to ensure the bt_noise column exists. First, check if a resampling model was given,
-    # in which case we will use the column bt_prob_{resample_model} if it exists. Next, search if a defualt
+    # in which case we will use the column bt_prob_{resample_model} if it exists. Next, search if a default
     # bt_noise column exists, which is bt_prob_{dataset_name} where dataset_name is the name of the dataset.
     # lastly if such column does not exist, try just bt_prob, which is the backwards compatibility case.
     # If none of these columns exist, raise an error.

@@ -46,7 +46,7 @@ def format_run_name(pipeline, model, dataset, extra_params):
             ]
         )
 
-    # this part is for the reward evaluator, noise type and noies level
+    # this part is for the reward evaluator, noise type and noise level
     if "resample_model" in extra_params and extra_params["resample_model"] is not None:
         configs += str(extra_params["resample_model"])
     if "noise_type" in extra_params and extra_params["noise_type"] is not None:

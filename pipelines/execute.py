@@ -235,7 +235,7 @@ if __name__ == "__main__":
     # Optional arguments
     parser.add_argument("--pipeline", help="DPO pipeline name (e.g., DPO, DPO-DRO)")
     parser.add_argument("--beta", type=float, default=0.1, help="Beta value for DPO (default: 0.1)")
-    parser.add_argument("--resample_model", default="openbmb/Eurus-RM-7b", help="Resample rewrd model name")
+    parser.add_argument("--resample_model", default="openbmb/Eurus-RM-7b", help="Resample reward model name")
     parser.add_argument("--noise_type", help="Type of noise (e.g., label_switching, bt_noise_gauss)")
     parser.add_argument("--noise_level", type=float, help="Level of noise (e.g., 0.4, 0.5)")
     parser.add_argument("--lora_r", type=int, default=64, help="LoRA r value (default: 64)")

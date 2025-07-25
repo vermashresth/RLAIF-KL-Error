@@ -238,10 +238,8 @@ def apply_noise_and_resampling(dataset, script_args, is_training=True):
             elif script_args.noise_type == "bt_noise_flip":
                 example["bt_prob"] = 1 - prob if np.random.random() < script_args.noise_level else prob
             elif script_args.noise_type == "label_switching":
-                # This is a special case where we just flip the label with a certain probability
-                if np.random.random() < script_args.noise_level:
-                    example["chosen"], example["rejected"] = example["rejected"], example["chosen"]
-                    example["bt_prob"] = 1 - prob
+                # This noise must be applied after sampling since it doesn't change bt_probs.
+                pass
             else:
                 raise ValueError(f"Unknown noise type: {script_args.noise_type}")
             return example

@@ -38,7 +38,7 @@ def format_run_name(pipeline, model, dataset, extra_params):
     else:
         if pipeline not in PARAMS_CONFIGS:
             raise ValueError(f"Unknown pipeline name: {pipeline}")
-        required_params = set(PARAMS_CONFIGS[pipeline]) - set(["resample_model", "noise_type", "noise_level"])
+        required_params = PARAMS_CONFIGS[pipeline]
         configs = "".join(
             [
                 (param_name if param_name != "loss_type" else "") + str(extra_params[param_name])

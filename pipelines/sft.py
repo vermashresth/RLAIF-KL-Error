@@ -67,11 +67,11 @@ class ScriptArguments:
         default=CACHE_CONFIGS["dataset_cache_dir"],
         metadata={"help": "dataset cache directory"},
     )
-    reward_model: Optional[str] = field(
+    resample_model: Optional[str] = field(
         default=None, metadata={"help": "reward model name for resampling labels"}
     )
     noise_type: Optional[str] = field(
-        default=None, metadata={"help": "type of noise to apply (e.g., label_switching, bt_prob_gauss)"}
+        default=None, metadata={"help": "type of noise to apply (e.g., label_switching, bt_noise_gauss, bt_noise_flip, bt_noise_adv)"}
     )
     noise_level: Optional[float] = field(
         default=None, metadata={"help": "level of noise to apply"}
@@ -101,8 +101,11 @@ class TrainingArguments(transformers.TrainingArguments):
     adam_beta2: float = field(
         default=0.95, metadata={"help": "adam beta2 for optimizer"}
     )
-    warmup_ratio: float = field(
-        default=0.05, metadata={"help": "warmup ratio for optimizer"}
+    # warmup_ratio: float = field(
+    #     default=0.05, metadata={"help": "warmup ratio for optimizer"}
+    # )
+    warmup_steps: int = field(
+        default=100, metadata={"help": "number of warmup steps for optimizer"}
     )
     lr_scheduler_type: str = field(
         default="cosine", metadata={"help": "lr scheduler type"}
@@ -232,9 +235,9 @@ def main(script_args: ScriptArguments, training_args: TrainingArguments):
         model=script_args.model,
         dataset=script_args.dataset,
         extra_params={
-            "reward_model": sanitize_model_name(script_args.reward_model),
-            "noise_type": script_args.noise_type,
-            "noise_level": script_args.noise_level,
+            "resample_model": sanitize_model_name(script_args.resample_model),
+            # "noise_type": script_args.noise_type,  # don't include noise to make evaluation of DPO more comparable
+            # "noise_level": script_args.noise_level,
         },
     )
     training_args.gradient_checkpointing_kwargs = dict(use_reentrant=False)

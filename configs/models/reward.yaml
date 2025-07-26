@@ -14,3 +14,11 @@ U:
 # U:
 #   id: OpenAssistant/reward-model-deberta-v3-base
 #   reverse: false
+
+RMAB_PG:
+  id: openbmb/Eurus-RM-7b
+  reverse: false
+
+RMAB_TG:
+  id: openbmb/Eurus-RM-7b
+  reverse: false

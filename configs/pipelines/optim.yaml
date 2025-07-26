@@ -1,19 +1,24 @@
 defaults:
   SFT:
-    num_train_epochs: 10
+    num_train_epochs: 2
     learning_rate: 2e-5
   DPO:
-    num_train_epochs: 5
+    num_train_epochs: 1
     learning_rate: 1e-5
 
 multipliers:
   num_train_epochs:
-    PP10: 1
-    PM10: 1
-    U10: 1
+    PP10: 5
+    PM10: 5
+    U10: 5
     U0: 1
+    RMAB_TG: 5
+    RMAB_PG: 5
   learning_rate:
     Q0.5B: 1
     Qc0.5B: 1
     Pm3B: 1
     L8B: 1
+    RMAB_PG: 1
+    RMAB_TG: 1
+

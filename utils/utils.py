@@ -217,9 +217,12 @@ def apply_noise_and_resampling(dataset, script_args, is_training=True):
         default_reward_model = REWARD_CONFIGS[dataset_name]['id']
         sanitized_resample_model = sanitize_model_name(default_reward_model)
 
-    if sanitized_resample_model is not None:
+    if sanitized_resample_model and f"bt_prob_{sanitized_resample_model}" in dataset.column_names:
         model_column = f"bt_prob_{sanitized_resample_model}"
         dataset = dataset.rename_column(model_column, "bt_prob")
+    elif "bt_probs" in dataset.column_names:
+        # check if bt_probs is present, which is the case for RMAB datasets
+        dataset = dataset.rename_column("bt_probs", "bt_prob")
     else:
         # check if bt_prob is already present, backwards compatibility case
         if "bt_prob" not in dataset.column_names:

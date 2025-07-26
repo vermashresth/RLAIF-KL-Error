@@ -34,6 +34,7 @@ def create_arguments(process, args):
         "noise_type": args.noise_type,
         "noise_level": args.noise_level,
         "loss_type": args.loss_type,
+        "dro_divergence_type": args.dro_divergence_type,
         "resample_model": sanitize_model_name(args.resample_model) if args.resample_model else None,
     }
 
@@ -82,6 +83,7 @@ def create_arguments(process, args):
             tag=args.tag,
             beta=args.beta,
             loss_type=args.loss_type,
+            dro_divergence_type=args.dro_divergence_type,
             resample_model=args.resample_model,
             noise_type=args.noise_type,
             noise_level=args.noise_level,
@@ -241,6 +243,9 @@ if __name__ == "__main__":
     parser.add_argument("--lora_r", type=int, default=64, help="LoRA r value (default: 64)")
     parser.add_argument("--lora_alpha", type=int, default=16, help="LoRA alpha value (default: 16)")
     parser.add_argument("--loss_type", help="Loss type (e.g., generalized_sigmoid)")
+    parser.add_argument("--dro_divergence_type", default="chi_squared", 
+                       choices=["kl_div", "chi_squared"],
+                       help="Divergence type for DRO method (default: chi_squared)")
     parser.add_argument("--model_max_length", type=int, default=1024, help="Maximum sequence length for the model (default: 1024)")
     parser.add_argument("--num_sft_train_epochs", type=int, default=5, help="Number of SFT training epochs (default: 1)")
     parser.add_argument("--num_dpo_train_epochs", type=int, default=5, help="Number of DPO training epochs (default: 1)")

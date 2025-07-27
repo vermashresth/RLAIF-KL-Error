@@ -144,6 +144,7 @@ class GeneralizedDPOTrainer(Trainer):
         beta_prime: float = 1.0,  # Add new parameter for DR_DPO robust aggregation
         epsilon: float = 0.1,  # Default value for RDPO robustness. Set to 0.1 as a reasonable starting point; adjust as needed based on use case or empirical results.
         logit_clipping: Optional[float] = None,  # Add new parameter for logit clipping
+        dro_divergence_type: str = "chi_squared",  # Divergence type for DRO method: "kl_div" or "chi_squared"
     """
 
     _tag_names = ["trl", "dpo"]
@@ -222,6 +223,7 @@ class GeneralizedDPOTrainer(Trainer):
         beta_prime: float = 1.0,  # Add new parameter for DR_DPO
         epsilon: float = 0.1,  # Add new parameter for RDPO robustness
         logit_clipping: Optional[float] = None,  # Add new parameter for logit clipping
+        dro_divergence_type: str = "chi_squared",  # Divergence type for DRO method: "kl_div" or "chi_squared"
         ##############################
     ):
         if model_init_kwargs is None:
@@ -450,6 +452,7 @@ class GeneralizedDPOTrainer(Trainer):
         self.omega = omega
         self.beta_prime = beta_prime
         self.epsilon = epsilon
+        self.dro_divergence_type = dro_divergence_type
         self._dpp_generation_inputs = []
         self._dpp_generation_outputs = []
         self._dpr_generation_inputs = []
@@ -1063,27 +1066,30 @@ class GeneralizedDPOTrainer(Trainer):
         return concatenated_batch
 
 
-    def optimize_p_on_kl_boundary(self, q: torch.Tensor, logits: torch.Tensor, nu: float, grid_size: int = 100):
+    def optimize_p_on_kl_boundary(self, q: torch.Tensor, logits: torch.Tensor, nu: float, grid_size: int = 100, divergence_type: str = "chi_squared"):
         """
         Solves for optimal p ∈ (0,1) that maximizes:
             f(p) = p * l+ + (1 - p) * l-
         under constraint:
-            KL(p || q) ≤ nu
+            KL(p || q) ≤ nu (for divergence_type="kl_div")
+            or uses chi-square divergence formula (for divergence_type="chi_squared")
 
-        Simple grid search approach: compute constraints, compute objectives, find argmax.
-        
         Args:
             q: Reference probabilities, must be in (0, 1)
             logits: Model logits for computing loss terms
-            nu: KL divergence budget (must be non-negative)
+            nu: Divergence budget (must be non-negative)
             grid_size: Number of grid points to evaluate (default: 100 for 0.01 resolution)
+            divergence_type: Type of divergence constraint ("kl_div" or "chi_squared")
             
         Returns:
-            Optimal probabilities p that maximize the objective under KL constraint
+            Optimal probabilities p that maximize the objective under divergence constraint
         """
         # Input validation
         if nu < 0:
-            raise ValueError(f"KL budget nu must be non-negative, got {nu}")
+            raise ValueError(f"Divergence budget nu must be non-negative, got {nu}")
+        
+        if divergence_type not in ["kl_div", "chi_squared"]:
+            raise ValueError(f"divergence_type must be 'kl_div' or 'chi_squared', got {divergence_type}")
         
         # Ensure tensors are on the same device and have compatible shapes
         q = q.to(logits.device)
@@ -1094,45 +1100,73 @@ class GeneralizedDPOTrainer(Trainer):
         eps = torch.finfo(q.dtype).eps * 10
         q_clamped = torch.clamp(q, eps, 1 - eps)
 
-        # Create grid of candidate p values
-        p_grid = torch.linspace(eps, 1 - eps, grid_size, device=q.device, dtype=q.dtype)
+        if divergence_type == "chi_squared":
+            # Chi-square divergence formula implementation
+            # Compute loss terms first
+            beta_logits = self.beta * logits
+            l_plus = torch.nn.functional.softplus(-beta_logits)   # -log(sigmoid(beta * logit))
+            l_minus = torch.nn.functional.softplus(beta_logits)   # -log(sigmoid(-beta * logit))
+            
+            # Chi-square divergence formula:
+            # p̂ = min{1, q + √(ν q(1-q))} if ℓ₁ ≥ ℓ₋₁
+            # p̂ = max{0, q - √(ν q(1-q))} if ℓ₁ < ℓ₋₁
+            
+            # Compute the square root term: √(ν q(1-q))
+            sqrt_term = torch.sqrt(nu * q_clamped * (1 - q_clamped))
+            
+            # Determine which condition applies: ℓ₁ ≥ ℓ₋₁ (l_plus >= l_minus)
+            condition = l_plus >= l_minus
+            
+            # Apply the chi-square divergence formula
+            p_optimal = torch.where(
+                condition,
+                torch.clamp(q_clamped + sqrt_term, eps, 1 - eps),  # min{1, q + √(ν q(1-q))}
+                torch.clamp(q_clamped - sqrt_term, eps, 1 - eps)   # max{0, q - √(ν q(1-q))}
+            )
+            
+            return p_optimal
         
-        # Expand dimensions for broadcasting: [batch_size, 1] and [1, grid_size]
-        q_expanded = q_clamped.unsqueeze(-1)  # [batch_size, 1]
-        p_expanded = p_grid.unsqueeze(0)      # [1, grid_size]
-        
-        # Step 1: Compute KL constraints for all grid points
-        # KL(p||q) = p*log(p/q) + (1-p)*log((1-p)/(1-q))
-        p_safe = torch.clamp(p_expanded, eps, 1 - eps)
-        q_safe = torch.clamp(q_expanded, eps, 1 - eps)
-        
-        kl_constraints = (p_safe * (torch.log(p_safe) - torch.log(q_safe)) + 
-                         (1 - p_safe) * (torch.log(1 - p_safe) - torch.log(1 - q_safe)))
-        
-        # Step 2: Compute objectives for all grid points
-        # f(p) = p * l+ + (1-p) * l- = l- + p * (l+ - l-)
-        beta_logits = self.beta * logits
-        l_plus = torch.nn.functional.softplus(-beta_logits)   # -log(sigmoid(beta * logit))
-        l_minus = torch.nn.functional.softplus(beta_logits)   # -log(sigmoid(-beta * logit))
-        slope = l_plus - l_minus
-        
-        l_minus_expanded = l_minus.unsqueeze(-1)  # [batch_size, 1]
-        slope_expanded = slope.unsqueeze(-1)      # [batch_size, 1]
-        objectives = l_minus_expanded + p_expanded * slope_expanded  # [batch_size, grid_size]
-        
-        # Step 3: Apply constraints by masking infeasible points with -inf
-        constraint_satisfied = kl_constraints <= nu + eps
-        objectives_masked = torch.where(constraint_satisfied, objectives, torch.full_like(objectives, float('-inf')))
-        
-        # Step 4: Find argmax for each batch element
-        best_indices = torch.argmax(objectives_masked, dim=1)  # [batch_size]
-        p_optimal = p_grid[best_indices]  # [batch_size]
+        else:  # divergence_type == "kl_div" 
+            # Original KL divergence implementation
+            # Create grid of candidate p values
+            p_grid = torch.linspace(eps, 1 - eps, grid_size, device=q.device, dtype=q.dtype)
+            
+            # Expand dimensions for broadcasting: [batch_size, 1] and [1, grid_size]
+            q_expanded = q_clamped.unsqueeze(-1)  # [batch_size, 1]
+            p_expanded = p_grid.unsqueeze(0)      # [1, grid_size]
+            
+            # Step 1: Compute KL constraints for all grid points
+            # KL(p||q) = p*log(p/q) + (1-p)*log((1-p)/(1-q))
+            p_safe = torch.clamp(p_expanded, eps, 1 - eps)
+            q_safe = torch.clamp(q_expanded, eps, 1 - eps)
+            
+            kl_constraints = (p_safe * (torch.log(p_safe) - torch.log(q_safe)) + 
+                             (1 - p_safe) * (torch.log(1 - p_safe) - torch.log(1 - q_safe)))
+            
+            # Step 2: Compute objectives for all grid points
+            # f(p) = p * l+ + (1-p) * l- = l- + p * (l+ - l-)
+            beta_logits = self.beta * logits
+            l_plus = torch.nn.functional.softplus(-beta_logits)   # -log(sigmoid(beta * logit))
+            l_minus = torch.nn.functional.softplus(beta_logits)   # -log(sigmoid(-beta * logit))
+            slope = l_plus - l_minus
+            
+            l_minus_expanded = l_minus.unsqueeze(-1)  # [batch_size, 1]
+            slope_expanded = slope.unsqueeze(-1)      # [batch_size, 1]
+            objectives = l_minus_expanded + p_expanded * slope_expanded  # [batch_size, grid_size]
+            
+            # Step 3: Apply constraints by masking infeasible points with -inf
+            constraint_satisfied = kl_constraints <= nu + eps
+            objectives_masked = torch.where(constraint_satisfied, objectives, torch.full_like(objectives, float('-inf')))
+            
+            # Step 4: Find argmax for each batch element
+            best_indices = torch.argmax(objectives_masked, dim=1)  # [batch_size]
+            p_optimal = p_grid[best_indices]  # [batch_size]
 
-        # Override p_optimal with the original q if no feasible solution found
-        p_optimal = torch.where(constraint_satisfied.any(dim=1), p_optimal, q_clamped)
-        
-        # Final safety clamp and return
-        return torch.clamp(p_optimal, eps, 1 - eps)
+            # Override p_optimal with the original q if no feasible solution found
+            p_optimal = torch.where(constraint_satisfied.any(dim=1), p_optimal, q_clamped)
+            
+            # Final safety clamp and return
+            return torch.clamp(p_optimal, eps, 1 - eps)
 
     def dpo_loss(
         self,
@@ -1287,7 +1321,7 @@ class GeneralizedDPOTrainer(Trainer):
             # q could be less than 0.5, chosen could be because of sampling
 
      
-            adjusted_chosen_rejected_probs = self.optimize_p_on_kl_boundary(chosen_rejected_probs, logits.detach(), nu=nu)
+            adjusted_chosen_rejected_probs = self.optimize_p_on_kl_boundary(chosen_rejected_probs, logits.detach(), nu=nu, divergence_type=self.dro_divergence_type)
             smooth_dro_loss = (
                 -F.logsigmoid(self.beta * logits) * adjusted_chosen_rejected_probs
                 - F.logsigmoid(-self.beta * logits) * (1 - adjusted_chosen_rejected_probs)

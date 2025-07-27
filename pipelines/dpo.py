@@ -131,6 +131,9 @@ class ScriptArguments:
     logit_clipping: Optional[float] = field(
         default=None, metadata={"help": "Logit clipping value"}
     )
+    dro_divergence_type: str = field(
+        default="chi_squared", metadata={"help": "Divergence type for DRO method: 'kl_div' or 'chi_squared'"}
+    )
 
 
 @dataclass
@@ -364,6 +367,7 @@ def train(model, tokenizer, train_dataset, eval_dataset, script_args, training_a
         beta_prime=script_args.beta_prime,
         epsilon=script_args.epsilon,
         label_smoothing=script_args.label_smoothing,
+        dro_divergence_type=script_args.dro_divergence_type,
         dataset_num_proc=4,
         logit_clipping=script_args.logit_clipping,
     )

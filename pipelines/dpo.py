@@ -128,6 +128,9 @@ class ScriptArguments:
     resample_model: Optional[str] = field(
         default=None, metadata={"help": "Reward model to use for bt_prob resampling"}
     )
+    logit_clipping: Optional[float] = field(
+        default=None, metadata={"help": "Logit clipping value"}
+    )
 
 
 @dataclass
@@ -196,11 +199,20 @@ def load_and_config_model(script_args, training_args):
         if training_args.fp16
         else (torch.bfloat16 if training_args.bf16 else torch.float32)
     )
+
+    # base model kwargs incompatible with ZeRO3
+    optional_base_model_kwargs = {}
+    if not deepspeed.is_deepspeed_zero3_enabled():
+        # add device map and low cpu mem true
+        optional_base_model_kwargs = {
+            "device_map": device_map,
+            "low_cpu_mem_usage": True,
+        }
+
     # Assume PEFT is used for SFT training for now
     base_model = AutoModelForCausalLM.from_pretrained(
         MODEL_CONFIGS[script_args.model],
         torch_dtype=compute_dtype,
-        device_map=device_map,
         quantization_config=(
             # Use 4-bit quantization as default QLoRA
             BitsAndBytesConfig(
@@ -214,14 +226,15 @@ def load_and_config_model(script_args, training_args):
             if script_args.use_lora and script_args.use_q_lora
             else None
         ),
-        low_cpu_mem_usage=not deepspeed.is_deepspeed_zero3_enabled(),
         # Update transformers package to >=4.38.0 and no need to use trust_remote_code
         trust_remote_code=True,
         # Use flash attention if specified
         attn_implementation="flash_attention_2" if script_args.use_flash_attn else None,
         use_cache=False if training_args.gradient_checkpointing else True,
         cache_dir=script_args.model_cache_dir,
+        **optional_base_model_kwargs
     )
+
     tokenizer = AutoTokenizer.from_pretrained(
         MODEL_CONFIGS[script_args.model],
         use_fast=True,
@@ -352,6 +365,7 @@ def train(model, tokenizer, train_dataset, eval_dataset, script_args, training_a
         epsilon=script_args.epsilon,
         label_smoothing=script_args.label_smoothing,
         dataset_num_proc=4,
+        logit_clipping=script_args.logit_clipping,
     )
 
     reward_model, reward_tokenizer, reward_model_reverse = None, None, None

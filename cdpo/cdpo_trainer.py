@@ -143,6 +143,7 @@ class GeneralizedDPOTrainer(Trainer):
         omega: float = 0.0,  # Add new parameter for DRO-DPR gradient weight
         beta_prime: float = 1.0,  # Add new parameter for DR_DPO robust aggregation
         epsilon: float = 0.1,  # Default value for RDPO robustness. Set to 0.1 as a reasonable starting point; adjust as needed based on use case or empirical results.
+        logit_clipping: Optional[float] = None,  # Add new parameter for logit clipping
     """
 
     _tag_names = ["trl", "dpo"]
@@ -220,6 +221,7 @@ class GeneralizedDPOTrainer(Trainer):
         omega: float = 0.0,  # Add new parameter for DRO-DPR gradient weight
         beta_prime: float = 1.0,  # Add new parameter for DR_DPO
         epsilon: float = 0.1,  # Add new parameter for RDPO robustness
+        logit_clipping: Optional[float] = None,  # Add new parameter for logit clipping
         ##############################
     ):
         if model_init_kwargs is None:
@@ -424,6 +426,7 @@ class GeneralizedDPOTrainer(Trainer):
 
         self.beta = beta
         self.label_smoothing = label_smoothing
+        self.logit_clipping = logit_clipping
 
         ##############################
         # New parameters
@@ -1163,6 +1166,10 @@ class GeneralizedDPOTrainer(Trainer):
         pi_logratios = pi_logratios.to(self.accelerator.device)
         ref_logratios = ref_logratios.to(self.accelerator.device)
         logits = pi_logratios - ref_logratios
+
+        if self.logit_clipping is not None:
+            # Clip logits to avoid numerical issues
+            logits = torch.clamp(logits, -self.logit_clipping, self.logit_clipping)
 
         ##############################
         # # DDP

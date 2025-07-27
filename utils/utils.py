@@ -290,6 +290,10 @@ def load_and_format_dataset(script_args, format_type):
     train_dataset = apply_noise_and_resampling(dataset["train"], script_args, is_training=True)
     eval_dataset = apply_noise_and_resampling(dataset["eval"], script_args, is_training=False)
 
+    if script_args.dataset.startswith("RMAB"):
+        train_dataset = train_dataset.map(rmab_format_func, num_proc=4, desc="Formatting RMAB train dataset")
+        eval_dataset = eval_dataset.map(rmab_format_func, num_proc=4, desc="Formatting RMAB eval dataset")
+
     if format_type == "sft":
         def format_func(sample):
             sample["text"] = sample["prompt"] + sample["chosen"]
@@ -299,6 +303,24 @@ def load_and_format_dataset(script_args, format_type):
         eval_dataset = eval_dataset.map(format_func, num_proc=4, desc="Formatting SFT eval dataset")
    
     return train_dataset, eval_dataset
+
+
+def rmab_format_func(sample):
+    sample["chosen"] = f"```python\n{sample['chosen']}\n```"
+    sample["rejected"] = f"```python\n{sample['rejected']}\n```"
+
+    prompt = sample["prompt"]
+
+    # a few things to replace
+    prompt = prompt.replace("Format your code with triple $ signs: $$$[YOUR FUNCTION]$$$", "Format your code with Python code block: \n```python\n[YOUR FUNCTION]\n```")
+    prompt = prompt.replace("'$$$ ", "\n```python\n")
+    sample["prompt"] = prompt.replace("$$$'", "\n```")
+
+    for key in ["chosen", "rejected", "prompt"]:
+        sample[key] = sample[key].replace("agent_feats", "feats")
+        sample[key] = sample[key].replace("agents_feats", "feats")
+
+    return sample
 
 
 def get_process_output_resource(process, script_args):

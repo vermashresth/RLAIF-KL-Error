@@ -17,7 +17,8 @@ from peft import PeftModel
 from accelerate import Accelerator
 from accelerate.utils import gather_object
 
-from utils import CONFIGS
+from utils import CONFIGS, rmab_format_func
+
 
 HUGGINGFACE_CONFIGS = CONFIGS.services.huggingface
 HFAPI = HfApi(HUGGINGFACE_CONFIGS["token"])
@@ -90,20 +91,30 @@ class ScriptArguments:
 
 # Load dataset and remove unnecessary columns
 def load_and_format_dataset(script_args):
+    dataset_name = script_args.run.split("_")[2]
+
+    if dataset_name == "RMAB":
+        dataset_name += "_" + script_args.run.split("_")[3]
+
     dataset = load_dataset(
-        HUGGINGFACE_CONFIGS["prefix"]["datasets"] + script_args.run.split("_")[2],
+        HUGGINGFACE_CONFIGS["prefix"]["datasets"] + dataset_name,
         cache_dir=script_args.dataset_cache_dir,
     )
-    select_columns = ["prompt", "chosen", "rejected"]
-    eval_dataset = dataset["eval"].map(
-        lambda sample: {col: sample[col] for col in select_columns},
-        remove_columns=[
-            col for col in dataset["eval"].column_names if col not in select_columns
-        ],
-        num_proc=4,
-    )
+    if dataset_name.startswith("RMAB"):
+        # Format RMAB dataset
+        dataset["eval"] = dataset["eval"].map(rmab_format_func, num_proc=4, desc="Formatting RMAB dataset")
 
-    return eval_dataset
+    # select_columns = ["prompt", "chosen", "rejected"]
+    # eval_dataset = dataset["eval"].map(
+    #     lambda sample: {col: sample[col] for col in select_columns},
+    #     remove_columns=[
+    #         col for col in dataset["eval"].column_names if col not in select_columns
+    #     ],
+    #     num_proc=4,
+    # )
+
+    # return eval_dataset
+    return dataset["eval"]
 
 
 # Load model and tokenizer for inference
@@ -194,11 +205,12 @@ def generate_responses(model, tokenizer, eval_dataset, script_args):
                     pad_token_id=tokenizer.eos_token_id,
                     **generate_kwargs if script_args.use_contrastive_search else {},
                 )
-                responses = tokenizer.batch_decode(outputs, skip_special_tokens=True)
-                responses = [
-                    response[len(prompt) :]
-                    for prompt, response in zip(prompts, responses)
-                ]
+                outputs = outputs[:, inputs["input_ids"].shape[1]:]  # Remove input part
+                responses = tokenizer.batch_decode(
+                    outputs,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=True,
+                )
                 result["response"].extend(responses)
                 if accelerator.is_local_main_process:
                     # Simulate the actual update by times the number of processes

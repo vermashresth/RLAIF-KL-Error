@@ -60,6 +60,9 @@ class ScriptArguments:
     tag: str = field(
         metadata={"help": "tag for the experiment"},
     )
+    sft_tag: Optional[str] = field(
+        default=None, metadata={"help": "tag for the SFT model, if different from the DPO tag"}
+    )
     beta: float = field(default=0.1, metadata={"help": "the beta parameter for STDPO"})
     label_smoothing: float = field(
         default=0.0, metadata={"help": "label smoothing parameter for training"}
@@ -128,8 +131,17 @@ class ScriptArguments:
     resample_model: Optional[str] = field(
         default=None, metadata={"help": "Reward model to use for bt_prob resampling"}
     )
+    logit_clipping: Optional[float] = field(
+        default=None, metadata={"help": "Logit clipping value"}
+    )
     dro_divergence_type: str = field(
         default="chi_squared", metadata={"help": "Divergence type for DRO method: 'kl_div' or 'chi_squared'"}
+    )
+    nu: float = field(
+        default=0.1, metadata={"help": "Parameter controlling the divergence constraint in DPO pro"}
+    )
+    push_dataset: bool = field(
+        default=True, metadata={"help": "Whether to push the model to the Hub"}
     )
 
 
@@ -199,11 +211,20 @@ def load_and_config_model(script_args, training_args):
         if training_args.fp16
         else (torch.bfloat16 if training_args.bf16 else torch.float32)
     )
+
+    # base model kwargs incompatible with ZeRO3
+    optional_base_model_kwargs = {}
+    if not deepspeed.is_deepspeed_zero3_enabled():
+        # add device map and low cpu mem true
+        optional_base_model_kwargs = {
+            "device_map": device_map,
+            "low_cpu_mem_usage": True,
+        }
+
     # Assume PEFT is used for SFT training for now
     base_model = AutoModelForCausalLM.from_pretrained(
         MODEL_CONFIGS[script_args.model],
         torch_dtype=compute_dtype,
-        device_map=device_map,
         quantization_config=(
             # Use 4-bit quantization as default QLoRA
             BitsAndBytesConfig(
@@ -217,14 +238,15 @@ def load_and_config_model(script_args, training_args):
             if script_args.use_lora and script_args.use_q_lora
             else None
         ),
-        low_cpu_mem_usage=not deepspeed.is_deepspeed_zero3_enabled(),
         # Update transformers package to >=4.38.0 and no need to use trust_remote_code
         trust_remote_code=True,
         # Use flash attention if specified
         attn_implementation="flash_attention_2" if script_args.use_flash_attn else None,
         use_cache=False if training_args.gradient_checkpointing else True,
         cache_dir=script_args.model_cache_dir,
+        **optional_base_model_kwargs
     )
+
     tokenizer = AutoTokenizer.from_pretrained(
         MODEL_CONFIGS[script_args.model],
         use_fast=True,
@@ -254,7 +276,7 @@ def load_and_config_model(script_args, training_args):
         model = PeftModel.from_pretrained(
             base_model,
             peft_model_id,
-            revision=script_args.tag,
+            revision=script_args.tag if script_args.sft_tag is None else script_args.sft_tag,
             is_trainable=True,
             adapter_name="default",
             cache_dir=script_args.model_cache_dir,
@@ -262,7 +284,7 @@ def load_and_config_model(script_args, training_args):
         # Load the adapter a second time, with a different name, which will be our reference model.
         model.load_adapter(
             peft_model_id,
-            revision=script_args.tag,
+            revision=script_args.tag if script_args.sft_tag is None else script_args.sft_tag,
             adapter_name="reference",
             cache_dir=script_args.model_cache_dir,
         )
@@ -356,6 +378,8 @@ def train(model, tokenizer, train_dataset, eval_dataset, script_args, training_a
         label_smoothing=script_args.label_smoothing,
         dro_divergence_type=script_args.dro_divergence_type,
         dataset_num_proc=4,
+        logit_clipping=script_args.logit_clipping,
+        nu=script_args.nu,
     )
 
     reward_model, reward_tokenizer, reward_model_reverse = None, None, None
@@ -492,7 +516,8 @@ def main(script_args: ScriptArguments, training_args: TrainingArguments):
 
     if accelerator.is_local_main_process:
         # Push to Hub
-        trainer.push_to_hub(revision=script_args.tag)
+        if script_args.push_dataset:
+            trainer.push_to_hub(revision=script_args.tag)
         # add_collection_item (
         #     collection_slug=HUGGINGFACE_CONFIGS["collections"]["models"],
         #     item_id=training_args.hub_model_id,

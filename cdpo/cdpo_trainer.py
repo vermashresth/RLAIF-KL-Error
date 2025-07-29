@@ -143,7 +143,9 @@ class GeneralizedDPOTrainer(Trainer):
         omega: float = 0.0,  # Add new parameter for DRO-DPR gradient weight
         beta_prime: float = 1.0,  # Add new parameter for DR_DPO robust aggregation
         epsilon: float = 0.1,  # Default value for RDPO robustness. Set to 0.1 as a reasonable starting point; adjust as needed based on use case or empirical results.
-        dro_divergence_type: str = "chi_squared",  # Divergence type for DRO method: "kl_div" or "chi_squared"
+        logit_clipping: Optional[float] = None,  # Add new parameter for logit clipping
+        dro_divergence_type: str = "chi_squared",  # Divergence type for DPO pro method: "kl_div" or "chi_squared"
+        nu: float = 0.1,  # Parameter controlling the divergence constraint in DPO pro
     """
 
     _tag_names = ["trl", "dpo"]
@@ -201,6 +203,8 @@ class GeneralizedDPOTrainer(Trainer):
             "generalized_sigmoid_dro_dynamic_smooth_label",
             "dr_dpo",
             "rdpo",
+            "dpo_pro",
+            "dpo_pr",
         ] = "generalized_sigmoid_smooth_label",
         generation_reuse_multiplier: Optional[int] = None,
         generation_num_batches: Optional[int] = None,
@@ -221,7 +225,9 @@ class GeneralizedDPOTrainer(Trainer):
         omega: float = 0.0,  # Add new parameter for DRO-DPR gradient weight
         beta_prime: float = 1.0,  # Add new parameter for DR_DPO
         epsilon: float = 0.1,  # Add new parameter for RDPO robustness
-        dro_divergence_type: str = "chi_squared",  # Divergence type for DRO method: "kl_div" or "chi_squared"
+        logit_clipping: Optional[float] = None,  # Add new parameter for logit clipping
+        dro_divergence_type: str = "chi_squared",  # Divergence type DPO pro method: "kl_div" or "chi_squared"
+        nu: float = 0.1,  # Parameter controlling the divergence constraint in DPO pro
         ##############################
     ):
         if model_init_kwargs is None:
@@ -426,6 +432,7 @@ class GeneralizedDPOTrainer(Trainer):
 
         self.beta = beta
         self.label_smoothing = label_smoothing
+        self.logit_clipping = logit_clipping
 
         ##############################
         # New parameters
@@ -449,6 +456,7 @@ class GeneralizedDPOTrainer(Trainer):
         self.omega = omega
         self.beta_prime = beta_prime
         self.epsilon = epsilon
+        self.nu = nu
         self.dro_divergence_type = dro_divergence_type
         self._dpp_generation_inputs = []
         self._dpp_generation_outputs = []
@@ -460,6 +468,7 @@ class GeneralizedDPOTrainer(Trainer):
         self._dro_dpr_sampling_mask = None
         self._dro_dpr_generation_inputs = []
         self._dro_dpr_generation_outputs = []
+
         ##############################
 
         self._stored_metrics = defaultdict(lambda: defaultdict(list))
@@ -574,7 +583,7 @@ class GeneralizedDPOTrainer(Trainer):
                 "collate_fn": self.data_collator,
                 "num_workers": self.args.dataloader_num_workers,
                 "pin_memory": self.args.dataloader_pin_memory,
-                "shuffle": False,
+                "shuffle": True,
             }
 
             # prepare dataloader
@@ -1100,9 +1109,9 @@ class GeneralizedDPOTrainer(Trainer):
         if divergence_type == "chi_squared":
             # Chi-square divergence formula implementation
             # Compute loss terms first
-            beta_logits = self.beta * logits
-            l_plus = torch.nn.functional.softplus(-beta_logits)   # -log(sigmoid(beta * logit))
-            l_minus = torch.nn.functional.softplus(beta_logits)   # -log(sigmoid(-beta * logit))
+            # beta_logits = self.beta * logits
+            # l_plus = torch.nn.functional.softplus(-beta_logits)   # -log(sigmoid(beta * logit))
+            # l_minus = torch.nn.functional.softplus(beta_logits)   # -log(sigmoid(-beta * logit))
             
             # Chi-square divergence formula:
             # p̂ = min{1, q + √(ν q(1-q))} if ℓ₁ ≥ ℓ₋₁
@@ -1111,14 +1120,16 @@ class GeneralizedDPOTrainer(Trainer):
             # Compute the square root term: √(ν q(1-q))
             sqrt_term = torch.sqrt(nu * q_clamped * (1 - q_clamped))
             
-            # Determine which condition applies: ℓ₁ ≥ ℓ₋₁ (l_plus >= l_minus)
-            condition = l_plus >= l_minus
-            
+            # Determine which condition applies:
+            # condition = l_plus >= l_minus
+            # adjustment = torch.where(l_plus == l_minus, 0.0, sqrt_term)  # Adjust sign based on condition
+            adjustment = torch.where(logits == 0, 0.0, sqrt_term)  # Use logits to determine adjustment
+
             # Apply the chi-square divergence formula
             p_optimal = torch.where(
-                condition,
-                torch.clamp(q_clamped + sqrt_term, eps, 1 - eps),  # min{1, q + √(ν q(1-q))}
-                torch.clamp(q_clamped - sqrt_term, eps, 1 - eps)   # max{0, q - √(ν q(1-q))}
+                logits > 0,
+                torch.clamp(q_clamped - adjustment, eps, 1 - eps),  # min{1, q + √(ν q(1-q))}
+                torch.clamp(q_clamped + adjustment, eps, 1 - eps)   # max{0, q - √(ν q(1-q))}
             )
             
             return p_optimal
@@ -1197,6 +1208,10 @@ class GeneralizedDPOTrainer(Trainer):
         pi_logratios = pi_logratios.to(self.accelerator.device)
         ref_logratios = ref_logratios.to(self.accelerator.device)
         logits = pi_logratios - ref_logratios
+
+        # if self.logit_clipping is not None:
+        #     # Clip logits to avoid numerical issues
+        #     logits = torch.clamp(logits, -self.logit_clipping, self.logit_clipping)
 
         ##############################
         # # DDP
@@ -1309,12 +1324,11 @@ class GeneralizedDPOTrainer(Trainer):
                 )
         elif self.loss_type == "generalized_sigmoid_dro_dynamic_smooth_label":
             # Solve DRO optimization to get adjusted probabilities
-            nu = 0.1 # for 0, p=q
             # nu = 1 is reasonable, nu cpould be anything positive
             # q could be less than 0.5, chosen could be because of sampling
 
      
-            adjusted_chosen_rejected_probs = self.optimize_p_on_kl_boundary(chosen_rejected_probs, logits.detach(), nu=nu, divergence_type=self.dro_divergence_type)
+            adjusted_chosen_rejected_probs = self.optimize_p_on_kl_boundary(chosen_rejected_probs, logits.detach(), nu=self.nu, divergence_type=self.dro_divergence_type)
             smooth_dro_loss = (
                 -F.logsigmoid(self.beta * logits) * adjusted_chosen_rejected_probs
                 - F.logsigmoid(-self.beta * logits) * (1 - adjusted_chosen_rejected_probs)
@@ -1331,6 +1345,20 @@ class GeneralizedDPOTrainer(Trainer):
                     * self.pi
                     * (F.logsigmoid(self.beta * logits) * self._dpp_sampling_mask) ** 2
                 )
+        elif self.loss_type == "dpo_pro":
+            # Solve DRO optimization to get adjusted probabilities
+            # nu = 1 is reasonable, nu cpould be anything positive
+            # q could be less than 0.5, chosen could be because of sampling
+            adjusted_chosen_rejected_probs = self.optimize_p_on_kl_boundary(chosen_rejected_probs, logits.detach(), nu=self.nu, divergence_type=self.dro_divergence_type)
+            losses = (
+                -F.logsigmoid(self.beta * logits) * adjusted_chosen_rejected_probs
+                - F.logsigmoid(-self.beta * logits) * (1 - adjusted_chosen_rejected_probs)
+            )
+        elif self.loss_type == "dpo_pr":
+            losses = (
+                -F.logsigmoid(self.beta * logits) * chosen_rejected_probs
+                - F.logsigmoid(-self.beta * logits) * (1 - chosen_rejected_probs)
+            )
         elif self.loss_type == "dr_dpo":
             # Dr.DPO (Distributionally Robust DPO) from Wu et al. (2024)
             # New hyperparameter beta_prime. Default to 1.
@@ -1511,6 +1539,13 @@ class GeneralizedDPOTrainer(Trainer):
             use_cache=False,
             **model_kwargs,
         ).logits
+
+        if self.logit_clipping is not None:
+            # Clip logits to avoid numerical issues
+            margin_max = all_logits.amax(dim=-1, keepdim=True)
+            all_logits = torch.clamp(
+                all_logits - margin_max, -self.logit_clipping, 0
+            )
 
         all_logps = self.get_batch_logps(
             all_logits,

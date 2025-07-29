@@ -288,7 +288,11 @@ def load_and_format_dataset(script_args, format_type):
     )
 
     train_dataset = apply_noise_and_resampling(dataset["train"], script_args, is_training=True)
-    eval_dataset = apply_noise_and_resampling(dataset["eval"], script_args, is_training=False)
+    eval_dataset = apply_noise_and_resampling(dataset["eval"], script_args, is_training=True)
+
+    if script_args.dataset.startswith("RMAB"):
+        train_dataset = train_dataset.map(rmab_format_func, num_proc=4, desc="Formatting RMAB train dataset")
+        eval_dataset = eval_dataset.map(rmab_format_func, num_proc=4, desc="Formatting RMAB eval dataset")
 
     if format_type == "sft":
         def format_func(sample):
@@ -299,6 +303,64 @@ def load_and_format_dataset(script_args, format_type):
         eval_dataset = eval_dataset.map(format_func, num_proc=4, desc="Formatting SFT eval dataset")
    
     return train_dataset, eval_dataset
+
+
+def rmab_format_func(sample):
+    sample["chosen"] = f"```python\n{sample['chosen']}\n```"
+    sample["rejected"] = f"```python\n{sample['rejected']}\n```"
+
+
+    for key in ["chosen", "rejected", "prompt"]:
+        sample[key] = sample[key].replace("agent_feats", "feats")
+        sample[key] = sample[key].replace("agents_feats", "feats")
+
+    prompt = sample["prompt"]
+
+    # a few things to replace
+    prompt = prompt.replace("Format your code with triple $ signs: $$$[YOUR FUNCTION]$$$", "Format your code with Python code block: \n```python\n[YOUR FUNCTION]\n```")   
+    prompt = prompt.replace("'$$$ ", "\n```python\n")
+    prompt = prompt.replace("$$$'", "\n```")
+    prompt = prompt.replace(
+        "Example Response:\nPython Code: \n```python\nstate * (feats[11] and feats[42]) \n```\nor \n```python\nstate + state * (feats[11] or 3*feats[42]) \n```\nor \n```python\nstate + 2*state * ((feats[11]+5 or feats[10]*3) and feats[42]) \n```\n",
+        "Example Responses:\n1.\n```python\nstate * (feats[11] and feats[42])\n```\n2.\n```python\nstate * (1 + feats[11] or 3*feats[42])\n```\n3.\n```python\n2 * ((feats[11]+5 or feats[10]*3) and feats[42] + 1) * state\n```\n",
+    )
+    # prompt = prompt.replace(
+    #     "the transformation would impact the preference instructionCome up with a unique new reward for the specified goal: ",
+    #     "the transformation that would impact the preference instruction. Propose a unique new reward for the specified goal: \"",
+    # )
+    prompt = prompt.replace(
+        "represents rich mothers\n",
+        "represents rich mothers.\n"
+    )
+    prompt = prompt.replace(
+        " In these example,",
+        "In these examples,",
+    )
+    prompt = prompt.replace(
+        "Example Prompt: ",
+        "\n### Example Prompt\n",
+    )
+    prompt = prompt.replace(
+        "Example Responses:",
+        "\n### Example Responses\n",
+    )
+    prompt = prompt.replace(
+        "Think about unique ways in which you can pick some set of features and combine them in linear, non linear or other logical transformations\nFurther think about how the transformation would impact the preference instructionCome up with a unique new reward for the specified goal: ",
+        "\n### Goal\nPropose a unique new reward tailored to the specified goal: \""
+    )
+
+    prompt = prompt.replace(
+        ". [/INST]",
+        "\". [/INST]",
+    )
+    prompt = prompt.replace(
+        "\n Your task:\n1. Write a simple, single-line Python reward function",
+        "\n\n### Task\nWrite a simple, single-line Python reward function for the specified goal. Provide only one response/reward function without additional explanation.  You can use any linear, non linear or other logical transformations of the features",
+    )
+
+    sample["prompt"] = prompt
+
+    return sample
 
 
 def get_process_output_resource(process, script_args):

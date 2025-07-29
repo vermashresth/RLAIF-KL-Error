@@ -90,6 +90,8 @@ def create_arguments(process, args):
             use_flash_attn=args.use_flash_attn,
             per_device_generation_batch_size=args.per_device_generation_batch_size,
             per_device_evalreward_batch_size=args.per_device_evalreward_batch_size,
+            logit_clipping=args.logit_clipping,
+            sft_tag=args.sft_tag,
         )
         
         training_args = TrainingArgumentsDPO(
@@ -107,6 +109,10 @@ def create_arguments(process, args):
             bf16=True,
             remove_unused_columns=False,
             model_max_length=args.model_max_length,
+            weight_decay=args.weight_decay,
+            optim=args.optim,
+            max_grad_norm=args.max_grad_norm,
+            warmup_steps=args.warmup_steps,
         )
         
         return script_args, training_args
@@ -125,10 +131,12 @@ def create_arguments(process, args):
         script_args = ScriptArgumentsGenerate(
             run=run_name,
             tag=args.tag,
-            # per_device_generation_batch_size=batch_params["per_device_generation_batch_size"],
             per_device_generation_batch_size=args.per_device_generation_batch_size,
             eval_limit=args.eval_limit,
             use_flash_attn=args.use_flash_attn,
+            do_sample=args.do_sample,
+            temperature=args.temperature,
+            max_new_tokens=args.generate_max_new_tokens,
         )
         
         return script_args
@@ -233,6 +241,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", required=True, help="Model name (e.g., Q0.5B)")
     parser.add_argument("--dataset", required=True, help="Dataset name (e.g., U0)")
     parser.add_argument("--tag", required=True, help="Tag for the experiment (e.g., tag1)")
+    parser.add_argument("--sft_tag", default=None, type=str, help="Tag for the SFT experiment (if different from main tag)")
     
     # Optional arguments
     parser.add_argument("--pipeline", help="DPO pipeline name (e.g., DPO, DPO-DRO)")
@@ -265,6 +274,9 @@ if __name__ == "__main__":
     # Generation arguments
     parser.add_argument("--per_device_generation_batch_size", type=int, default=8, help="Per device generation batch size (default: 8)")
     parser.add_argument("--per_device_evalreward_batch_size", type=int, default=8, help="Per device evalreward batch size (default: 8)")
+    parser.add_argument("--do_sample", default=False, action="store_true", help="Use sampling for generation (default: False)")
+    parser.add_argument("--temperature", type=float, default=1.0, help="Temperature for sampling (default: 1.0)")
+    parser.add_argument("--generate_max_new_tokens", type=int, default=None, help="Maximum number of new tokens to generate (default: None, which uses model_max_length)")
 
     # GPU resource specification (required for config-driven parameters)
     # parser.add_argument("-g", "--gres", required=True, help="GPU resources (e.g., A100:1, A100) for automatic parameter configuration")
@@ -284,6 +296,13 @@ if __name__ == "__main__":
     # Overwrite control
     parser.add_argument("--overwrite", action="store_true", help="Force overwrite existing models/datasets (skip smart checking)")
     
+    # Parmereeters for DPO training
+    parser.add_argument('--logit_clipping', type=float, default=None, help='Logit clipping value (optional)')  # New argument for logit clippings
+    parser.add_argument('--weight_decay', type=float, default=0.01, help='Weight decay for optimizer')
+    parser.add_argument('--optim', type=str, default='adamw_torch', help='Optimizer to use')
+    parser.add_argument('--max_grad_norm', type=float, default=1.0, help='Maximum gradient norm for clipping')
+    parser.add_argument('--warmup_steps', type=int, default=100, help='Number of warmup steps for training')
+
     args = parser.parse_args()
 
     main(args)

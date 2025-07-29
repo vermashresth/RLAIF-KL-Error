@@ -66,6 +66,10 @@ class ScriptArguments:
         default=False,
         metadata={"help": "use sampling for generation"},
     )
+    temperature: float = field(
+        default=1.0,
+        metadata={"help": "temperature for sampling"},
+    )
     use_contrastive_search: bool = field(
         # Use contrastive search to improve the quality of small models
         default=True,
@@ -86,6 +90,10 @@ class ScriptArguments:
     dataset_cache_dir: str = field(
         default=CACHE_CONFIGS["dataset_cache_dir"],
         metadata={"help": "dataset cache directory"},
+    )
+    max_new_tokens: int = field(
+        default=None,
+        metadata={"help": "maximum number of new tokens to generate"},
     )
 
 
@@ -196,12 +204,24 @@ def generate_responses(model, tokenizer, eval_dataset, script_args):
                     "penalty_alpha": script_args.penalty_alpha,
                     "top_k": script_args.top_k,
                 }
+                if script_args.do_sample:
+                    generate_kwargs.update(
+                        {
+                            "do_sample": True,
+                            "temperature": script_args.temperature,
+                        }
+                    )
+                else:
+                    generate_kwargs.update({"do_sample": False})
+
+                if script_args.max_new_tokens is not None:
+                    generate_kwargs["max_new_tokens"] = script_args.max_new_tokens
+                else:
+                    generate_kwargs["max_length"] = script_args.model_max_length
+               
                 outputs = model.generate(
                     **inputs.to(model.device),
                     num_beams=script_args.num_beams,
-                    do_sample=script_args.do_sample,
-                    max_length=script_args.model_max_length,
-                    max_new_tokens=None,
                     pad_token_id=tokenizer.eos_token_id,
                     **generate_kwargs if script_args.use_contrastive_search else {},
                 )

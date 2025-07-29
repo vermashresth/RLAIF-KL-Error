@@ -60,6 +60,9 @@ class ScriptArguments:
     tag: str = field(
         metadata={"help": "tag for the experiment"},
     )
+    sft_tag: Optional[str] = field(
+        default=None, metadata={"help": "tag for the SFT model, if different from the DPO tag"}
+    )
     beta: float = field(default=0.1, metadata={"help": "the beta parameter for STDPO"})
     label_smoothing: float = field(
         default=0.0, metadata={"help": "label smoothing parameter for training"}
@@ -133,6 +136,12 @@ class ScriptArguments:
     )
     dro_divergence_type: str = field(
         default="chi_squared", metadata={"help": "Divergence type for DRO method: 'kl_div' or 'chi_squared'"}
+    )
+    nu: float = field(
+        default=0.1, metadata={"help": "Parameter controlling the divergence constraint in DPO pro"}
+    )
+    push_dataset: bool = field(
+        default=True, metadata={"help": "Whether to push the model to the Hub"}
     )
 
 
@@ -267,7 +276,7 @@ def load_and_config_model(script_args, training_args):
         model = PeftModel.from_pretrained(
             base_model,
             peft_model_id,
-            revision=script_args.tag,
+            revision=script_args.tag if script_args.sft_tag is None else script_args.sft_tag,
             is_trainable=True,
             adapter_name="default",
             cache_dir=script_args.model_cache_dir,
@@ -275,7 +284,7 @@ def load_and_config_model(script_args, training_args):
         # Load the adapter a second time, with a different name, which will be our reference model.
         model.load_adapter(
             peft_model_id,
-            revision=script_args.tag,
+            revision=script_args.tag if script_args.sft_tag is None else script_args.sft_tag,
             adapter_name="reference",
             cache_dir=script_args.model_cache_dir,
         )
@@ -370,6 +379,7 @@ def train(model, tokenizer, train_dataset, eval_dataset, script_args, training_a
         dro_divergence_type=script_args.dro_divergence_type,
         dataset_num_proc=4,
         logit_clipping=script_args.logit_clipping,
+        nu=script_args.nu,
     )
 
     reward_model, reward_tokenizer, reward_model_reverse = None, None, None
@@ -506,7 +516,8 @@ def main(script_args: ScriptArguments, training_args: TrainingArguments):
 
     if accelerator.is_local_main_process:
         # Push to Hub
-        trainer.push_to_hub(revision=script_args.tag)
+        if script_args.push_dataset:
+            trainer.push_to_hub(revision=script_args.tag)
         # add_collection_item (
         #     collection_slug=HUGGINGFACE_CONFIGS["collections"]["models"],
         #     item_id=training_args.hub_model_id,

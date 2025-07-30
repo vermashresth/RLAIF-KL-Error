@@ -322,7 +322,7 @@ def rmab_format_func(sample):
     prompt = prompt.replace("$$$'", "\n```")
     prompt = prompt.replace(
         "Example Response:\nPython Code: \n```python\nstate * (feats[11] and feats[42]) \n```\nor \n```python\nstate + state * (feats[11] or 3*feats[42]) \n```\nor \n```python\nstate + 2*state * ((feats[11]+5 or feats[10]*3) and feats[42]) \n```\n",
-        "Example Responses:\n1.\n```python\nstate * (feats[11] and feats[42])\n```\n2.\n```python\nstate * (1 + feats[11] or 3*feats[42])\n```\n3.\n```python\n2 * ((feats[11]+5 or feats[10]*3) and feats[42] + 1) * state\n```\n",
+        "Example Response:\n1.\n```python\nstate * (feats[11] and feats[42])\n```\n",
     )
     # prompt = prompt.replace(
     #     "the transformation would impact the preference instructionCome up with a unique new reward for the specified goal: ",

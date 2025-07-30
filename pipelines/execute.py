@@ -260,13 +260,13 @@ if __name__ == "__main__":
     parser.add_argument("--num_dpo_train_epochs", type=int, default=5, help="Number of DPO training epochs (default: 1)")
 
     # SFT Training arguments
-    parser.add_argument("--sft_learning_rate", type=float, default=5e-5, help="Learning rate for training (default: 2e-5)")
+    parser.add_argument("--sft_learning_rate", type=float, default=1e-5, help="Learning rate for training (default: 2e-5)")
     parser.add_argument("--sft_per_device_train_batch_size", type=int, default=16, help="SFT per device train batch size (default: 16)")
     parser.add_argument("--sft_per_device_eval_batch_size", type=int, default=16, help="SFT per device eval batch size (default: 16)")
     parser.add_argument("--sft_gradient_accumulation_steps", type=int, default=1, help="Gradient accumulation steps (default: 1)")
 
     # DPO Training arguments
-    parser.add_argument("--dpo_learning_rate", type=float, default=2e-5, help="Learning rate for DPO training (default: 1e-5)")
+    parser.add_argument("--dpo_learning_rate", type=float, default=2e-6, help="Learning rate for DPO training (default: 2e-6)")
     parser.add_argument("--dpo_per_device_train_batch_size", type=int, default=4, help="DPO per device train batch size (default: 4)")
     parser.add_argument("--dpo_per_device_eval_batch_size", type=int, default=4, help="DPO per device eval batch size (default: 4)")
     parser.add_argument("--dpo_gradient_accumulation_steps", type=int, default=4, help="DPO gradient accumulation steps (default: 4)")
@@ -298,7 +298,7 @@ if __name__ == "__main__":
     
     # Parmereeters for DPO training
     parser.add_argument('--logit_clipping', type=float, default=None, help='Logit clipping value (optional)')  # New argument for logit clippings
-    parser.add_argument('--weight_decay', type=float, default=0.01, help='Weight decay for optimizer')
+    parser.add_argument('--weight_decay', type=float, default=0.0, help='Weight decay for optimizer')
     parser.add_argument('--optim', type=str, default='adamw_torch', help='Optimizer to use')
     parser.add_argument('--max_grad_norm', type=float, default=1.0, help='Maximum gradient norm for clipping')
     parser.add_argument('--warmup_steps', type=int, default=100, help='Number of warmup steps for training')

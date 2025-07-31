@@ -93,13 +93,26 @@ def create_arguments(process, args):
             logit_clipping=args.logit_clipping,
             sft_tag=args.sft_tag,
         )
+
+        training_kwargs = {}
+        if args.lr_scheduler_type:
+            training_kwargs["lr_scheduler_type"] = args.lr_scheduler_type
+        if args.lr_scheduler_kwargs:
+            training_kwargs["lr_scheduler_kwargs"] = eval(args.lr_scheduler_kwargs)
+        if args.warmup_steps:
+            training_kwargs["warmup_steps"] = args.warmup_steps
+        if args.optim:
+            training_kwargs["optim"] = args.optim
+        if args.max_grad_norm:
+            training_kwargs["max_grad_norm"] = args.max_grad_norm
+        if args.weight_decay:
+            training_kwargs["weight_decay"] = args.weight_decay
+        if args.logit_clipping:
+            training_kwargs["logit_clipping"] = args.logit_clipping
         
         training_args = TrainingArgumentsDPO(
             num_train_epochs=args.num_dpo_train_epochs,
             learning_rate=args.dpo_learning_rate,
-            # per_device_train_batch_size=batch_params["per_device_train_batch_size"],
-            # per_device_eval_batch_size=batch_params["per_device_eval_batch_size"],
-            # gradient_accumulation_steps=batch_params["gradient_accumulation_steps"],
             per_device_train_batch_size=args.dpo_per_device_train_batch_size,
             per_device_eval_batch_size=args.dpo_per_device_eval_batch_size,
             gradient_accumulation_steps=args.dpo_gradient_accumulation_steps,
@@ -109,10 +122,7 @@ def create_arguments(process, args):
             bf16=True,
             remove_unused_columns=False,
             model_max_length=args.model_max_length,
-            weight_decay=args.weight_decay,
-            optim=args.optim,
-            max_grad_norm=args.max_grad_norm,
-            warmup_steps=args.warmup_steps,
+            **training_kwargs
         )
         
         return script_args, training_args
@@ -298,10 +308,12 @@ if __name__ == "__main__":
     
     # Parmereeters for DPO training
     parser.add_argument('--logit_clipping', type=float, default=None, help='Logit clipping value (optional)')  # New argument for logit clippings
-    parser.add_argument('--weight_decay', type=float, default=0.0, help='Weight decay for optimizer')
-    parser.add_argument('--optim', type=str, default='adamw_torch', help='Optimizer to use')
-    parser.add_argument('--max_grad_norm', type=float, default=1.0, help='Maximum gradient norm for clipping')
-    parser.add_argument('--warmup_steps', type=int, default=100, help='Number of warmup steps for training')
+    parser.add_argument('--weight_decay', type=float, default=None, help='Weight decay for optimizer')
+    parser.add_argument('--optim', type=str, default=None, help='Optimizer to use')
+    parser.add_argument('--max_grad_norm', type=float, default=None, help='Maximum gradient norm for clipping')
+    parser.add_argument('--lr_scheduler_type', type=str, default=None, help='Learning rate scheduler type (e.g., linear, cosine, cosine_with_min_lr)')
+    parser.add_argument('--lr_scheduler_kwargs', type=str, default=None, help='Additional arguments for the learning rate scheduler')
+    parser.add_argument('--warmup_steps', type=int, default=None, help='Number of warmup steps for learning rate scheduler')
 
     args = parser.parse_args()
 

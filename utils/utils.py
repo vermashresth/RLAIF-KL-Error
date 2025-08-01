@@ -197,9 +197,9 @@ def sanitize_model_name(model_id: Optional[str]) -> Optional[str]:
     return model_name  
 
 
-def apply_noise_and_resampling(dataset, script_args, is_training=True):
+def apply_noise_and_resampling(dataset, script_args, apply_noise=True, resample=True):
     """Helper function to handle noise injection and label resampling for both SFT and DPO"""
-    
+
     # 1. We need to ensure the bt_noise column exists. First, check if a resampling model was given,
     # in which case we will use the column bt_prob_{resample_model} if it exists. Next, search if a default
     # bt_noise column exists, which is bt_prob_{dataset_name} where dataset_name is the name of the dataset.
@@ -227,9 +227,9 @@ def apply_noise_and_resampling(dataset, script_args, is_training=True):
         # check if bt_prob is already present, backwards compatibility case
         if "bt_prob" not in dataset.column_names:
             raise ValueError("bt_prob column is missing in the dataset. Please ensure it is present.")
-    
+
     # Now inject noise, only needed in training
-    if is_training and script_args.noise_type:
+    if apply_noise and script_args.noise_type:
         def apply_noise(example):
             prob = example["bt_prob"]
             if script_args.noise_type == "bt_noise_gauss":
@@ -249,32 +249,27 @@ def apply_noise_and_resampling(dataset, script_args, is_training=True):
         dataset = dataset.map(apply_noise, num_proc=4, desc="Applying noise to bt_prob")
 
     # 2. Resample labels according to bt_prob
-    if is_training and sanitized_resample_model is not None:
+    if resample and sanitized_resample_model is not None:
         def resample_labels(example):
             prob = example["bt_prob"]
             label = np.random.choice(["y1", "y2"], p=[prob, 1 - prob])
-
-            # Flip again labels if noise type is label_switching
-            if is_training and script_args.noise_type == "label_switching":
-                if np.random.random() < script_args.noise_level:
-                    label = "y2" if label == "y1" else "y1"
 
             if label == "y2":
                 example["chosen"], example["rejected"] = example["rejected"], example["chosen"]
                 example["bt_prob"] = 1 - prob
 
             return example
-        
+
         dataset = dataset.map(resample_labels, num_proc=4, desc="Resampling labels based on bt_prob")
 
     # 3. Apply addition label switching noise if needed / does not affect bt_prob
-    if is_training and script_args.noise_type == "label_switching":
+    if apply_noise and script_args.noise_type == "label_switching":
         def apply_label_switching_noise(example):
             if np.random.random() < script_args.noise_level:
                 example["chosen"], example["rejected"] = example["rejected"], example["chosen"]
                 example["bt_prob"] = 1 - example["bt_prob"]
             return example
-        
+
         dataset = dataset.map(apply_label_switching_noise, num_proc=4, desc="Applying label switching noise")
 
     return dataset
@@ -287,8 +282,8 @@ def load_and_format_dataset(script_args, format_type):
         cache_dir=getattr(script_args, 'dataset_cache_dir', None),
     )
 
-    train_dataset = apply_noise_and_resampling(dataset["train"], script_args, is_training=True)
-    eval_dataset = apply_noise_and_resampling(dataset["eval"], script_args, is_training=False)
+    train_dataset = apply_noise_and_resampling(dataset["train"], script_args, apply_noise=True, resample=True)
+    eval_dataset = apply_noise_and_resampling(dataset["eval"], script_args, apply_noise=False, resample=False)
 
     if script_args.dataset.startswith("RMAB"):
         train_dataset = train_dataset.map(rmab_format_func, num_proc=4, desc="Formatting RMAB train dataset")

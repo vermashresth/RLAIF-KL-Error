@@ -138,6 +138,8 @@ def evaluate_reward(model, tokenizer, response_dataset, script_args, response_co
         new_column_name = "reward_score_generated"
     elif response_column == "chosen":
         new_column_name = "reward_score_chosen"
+    elif response_column == "rejected":
+        new_column_name = "reward_score_rejected"
     else:
         raise ValueError(f"Unknown response column: {response_column}")
 
@@ -224,6 +226,7 @@ def main(script_args: ScriptArguments):
     # Evaluation
     response_dataset = evaluate_reward(model, tokenizer, response_dataset, script_args, "response")
     response_dataset = evaluate_reward(model, tokenizer, response_dataset, script_args, "chosen")
+    # response_dataset = evaluate_reward(model, tokenizer, response_dataset, script_args, "rejected")
 
     # Push to Hub
     DatasetDict(

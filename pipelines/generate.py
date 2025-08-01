@@ -39,9 +39,23 @@ class ScriptArguments:
     tag: str = field(
         metadata={"help": "tag for the experiment"},
     )
+    split: str = field(
+        default="eval",
+        metadata={"help": "split to evaluate"},
+    )
     eval_limit: int = field(
         default=-1,
         metadata={"help": "limit the number of samples to evaluate"},
+    )
+    eval_dataset: str = field(
+        default=None,
+        metadata={"help": "name of the evaluation dataset, if None, uses the run name"},
+    )
+    upload_name: str = field(
+        default=None,
+        metadata={
+            "help": "name to upload the dataset to HuggingFace, if None, uses run name"
+        },
     )
     bf16: bool = field(default=True, metadata={"help": "use bfloat16"})
     fp16: bool = field(default=False, metadata={"help": "use float16"})
@@ -99,15 +113,19 @@ class ScriptArguments:
 
 # Load dataset and remove unnecessary columns
 def load_and_format_dataset(script_args):
-    dataset_name = script_args.run.split("_")[2]
+    if script_args.eval_dataset is None:
+        dataset_name = script_args.run.split("_")[2]
 
-    if dataset_name == "RMAB":
-        dataset_name += "_" + script_args.run.split("_")[3]
+        if dataset_name == "RMAB":
+            dataset_name += "_" + script_args.run.split("_")[3]
+    else:
+        dataset_name = script_args.eval_dataset
 
     dataset = load_dataset(
         HUGGINGFACE_CONFIGS["prefix"]["datasets"] + dataset_name,
         cache_dir=script_args.dataset_cache_dir,
     )
+    split = script_args.split 
     if dataset_name.startswith("RMAB"):
         # Format RMAB dataset
         dataset["eval"] = dataset["eval"].map(rmab_format_func, num_proc=4, desc="Formatting RMAB dataset")
@@ -262,10 +280,11 @@ def main(script_args: ScriptArguments):
             "response",
             [response for result in results for response in result["response"]],
         )
+        target_run = script_args.run if script_args.upload_name is None else script_args.upload_name
         DatasetDict(
             {"default": response_dataset},
         ).push_to_hub(
-            HUGGINGFACE_CONFIGS["prefix"]["evaluations"] + script_args.run,
+            HUGGINGFACE_CONFIGS["prefix"]["evaluations"] + target_run,
             script_args.tag,
         )
         # add_collection_item(

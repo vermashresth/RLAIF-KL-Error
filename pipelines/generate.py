@@ -1,3 +1,4 @@
+from functools import partial
 import os
 import sys
 from dataclasses import dataclass, field
@@ -125,10 +126,12 @@ def load_and_format_dataset(script_args):
         HUGGINGFACE_CONFIGS["prefix"]["datasets"] + dataset_name,
         cache_dir=script_args.dataset_cache_dir,
     )
-    split = script_args.split 
+
     if dataset_name.startswith("RMAB"):
         # Format RMAB dataset
-        dataset["eval"] = dataset["eval"].map(rmab_format_func, num_proc=4, desc="Formatting RMAB dataset")
+        dataset[script_args.split] = dataset[script_args.split].map(
+            partial(rmab_format_func, prefix="fixed_"), num_proc=4, desc="Formatting RMAB dataset"
+        )
 
     # select_columns = ["prompt", "chosen", "rejected"]
     # eval_dataset = dataset["eval"].map(
@@ -140,7 +143,7 @@ def load_and_format_dataset(script_args):
     # )
 
     # return eval_dataset
-    return dataset["eval"]
+    return dataset[script_args.split]
 
 
 # Load model and tokenizer for inference
@@ -199,7 +202,7 @@ def generate_responses(model, tokenizer, eval_dataset, script_args):
     # Progress bar only on main process
     pbar = tqdm(total=len(eval_dataset), disable=not accelerator.is_local_main_process)
     # Split the list of prompts to each process, note it only works for list
-    all_prompts = list(eval_dataset["prompt"])
+    all_prompts = list(eval_dataset["fixed_prompt"] if "fixed_prompt" in eval_dataset.column_names else eval_dataset["prompt"])
     with accelerator.split_between_processes(all_prompts) as process_prompts:
         dataloader = DataLoader(
             process_prompts,
@@ -280,6 +283,22 @@ def main(script_args: ScriptArguments):
             "response",
             [response for result in results for response in result["response"]],
         )
+        # also add fixed prompt, fixed chosen fixed rejects if exists
+        # if "fixed_prompt" in eval_dataset.column_names:
+        #     response_dataset = response_dataset.add_column(
+        #         "fixed_prompt",
+        #         [prompt for prompt in eval_dataset["fixed_prompt"]],
+        #     )
+        # if "fixed_chosen" in eval_dataset.column_names:
+        #     response_dataset = response_dataset.add_column(
+        #         "fixed_chosen",
+        #         [chosen for chosen in eval_dataset["fixed_chosen"]],
+        #     )
+        # if "fixed_rejected" in eval_dataset.column_names:
+        #     response_dataset = response_dataset.add_column(
+        #         "fixed_rejected",
+        #         [rejected for rejected in eval_dataset["fixed_rejected"]],
+        #     )
         target_run = script_args.run if script_args.upload_name is None else script_args.upload_name
         DatasetDict(
             {"default": response_dataset},

@@ -158,8 +158,9 @@ def evaluate_reward(model, tokenizer, response_dataset, script_args, response_co
         result = {}
         for indices, samples in process_indices_and_samples:
             with torch.no_grad():
+                prompts = [sample["fixed_prompt"] if "fixed_prompt" in sample else sample["prompt"] for sample in samples]
                 inputs = tokenizer(
-                    [sample["prompt"] + sample[response_column] for sample in samples],
+                    prompts,
                     max_length=script_args.model_max_length,
                     truncation=script_args.truncation,
                     padding=script_args.padding,

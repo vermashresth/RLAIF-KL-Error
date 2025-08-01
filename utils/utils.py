@@ -300,18 +300,24 @@ def load_and_format_dataset(script_args, format_type):
     return train_dataset, eval_dataset
 
 
-def rmab_format_func(sample):
-    if "```python" not in sample["chosen"]:
-        sample["chosen"] = f"```python\n{sample['chosen']}\n```"
+def rmab_format_func(sample, prefix=""): 
+    if prefix != "":
+        sample[prefix + "prompt"] = sample["prompt"]
+        sample[prefix + "chosen"] = sample["chosen"]
+        sample[prefix + "rejected"] = sample["rejected"]
 
-    if "```python" not in sample["rejected"]:
-        sample["rejected"] = f"```python\n{sample['rejected']}\n```"
+    if "```python" in sample["prompt"]:
+        # No need to do anything, already formatted
+        return sample
+
+    sample[prefix + "chosen"] = f"```python\n{sample[prefix + 'chosen']}\n```"
+    sample[prefix + "rejected"] = f"```python\n{sample[prefix + 'rejected']}\n```"
 
     for key in ["chosen", "rejected", "prompt"]:
-        sample[key] = sample[key].replace("agent_feats", "feats")
-        sample[key] = sample[key].replace("agents_feats", "feats")
+        sample[prefix + key] = sample[prefix + key].replace("agent_feats", "feats")
+        sample[prefix + key] = sample[prefix + key].replace("agents_feats", "feats")
 
-    prompt = sample["prompt"]
+    prompt = sample[prefix + "prompt"]
 
     # a few things to replace
     prompt = prompt.replace("Format your code with triple $ signs: $$$[YOUR FUNCTION]$$$", "Format your code with Python code block: \n```python\n[YOUR FUNCTION]\n```")   
@@ -355,7 +361,7 @@ def rmab_format_func(sample):
         "\n\n### Task\nWrite a simple, single-line Python reward function for the specified goal. Provide only one response/reward function without additional explanation.  You can use any linear, non linear or other logical transformations of the features",
     )
 
-    sample["prompt"] = prompt
+    sample[prefix + "prompt"] = prompt
 
     return sample
 
